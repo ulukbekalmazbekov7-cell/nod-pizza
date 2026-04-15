@@ -390,7 +390,7 @@ export default function Calendar() {
                     <td
                       key={`${employee.id}-shift-${dayIndex}`}
                       onClick={() => handleShiftClick(employee.id, dayIndex)}
-                      className={`border border-neutral-700 px-2 py-2 text-center font-bold transition ${
+                      className={`border border-neutral-700 px-1.5 py-1.5 text-center text-xs font-bold transition ${
                         getShiftCellClass(shift)
                       } ${isEditing ? "cursor-pointer hover:brightness-95" : ""}`}
                     >
@@ -411,7 +411,7 @@ export default function Calendar() {
                     return (
                       <td
                         key={`${employee.id}-branch-${day.dayNumber}`}
-                        className="min-w-[72px] border border-neutral-700 px-1 py-2 text-center text-[10px] leading-tight"
+                        className="min-w-[56px] border border-neutral-700 px-1 py-1 text-center text-[9px] leading-tight"
                       >
                         {shift === "В" ? (
                           <span className="text-white/20">—</span>
@@ -442,17 +442,17 @@ export default function Calendar() {
         </table>
       </div>
 
-      <div className="mt-4 flex flex-wrap gap-3 text-sm text-white/70">
+      <div className="mt-3 flex flex-wrap gap-2 text-xs text-white/70">
         <div className="flex items-center gap-2">
-          <span className="inline-block h-4 w-4 rounded bg-yellow-200" />
+          <span className="inline-block h-3 w-3 rounded bg-yellow-200" />
           <span>День</span>
         </div>
         <div className="flex items-center gap-2">
-          <span className="inline-block h-4 w-4 rounded bg-blue-200" />
+          <span className="inline-block h-3 w-3 rounded bg-blue-200" />
           <span>Ночь</span>
         </div>
         <div className="flex items-center gap-2">
-          <span className="inline-block h-4 w-4 rounded bg-neutral-200" />
+          <span className="inline-block h-3 w-3 rounded bg-neutral-200" />
           <span>Выходной</span>
         </div>
       </div>
