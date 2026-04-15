@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import ShiftCalendar from "./components/Calendar";
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import {
@@ -104,26 +105,38 @@ export default function Home() {
           </div>
 
           <nav className="space-y-2 text-sm">
-  <Link href="/" className="block rounded-xl bg-white/10 px-4 py-3">
-    Главная
-  </Link>
+            <Link href="/" className="block rounded-xl bg-white/10 px-4 py-3">
+              Главная
+            </Link>
 
-  <Link href="/inspections" className="block rounded-xl px-4 py-3 hover:bg-white/5">
-    Проверки
-  </Link>
+            <Link
+              href="/inspections"
+              className="block rounded-xl px-4 py-3 hover:bg-white/5"
+            >
+              Проверки
+            </Link>
 
-  <Link href="/branches" className="block rounded-xl px-4 py-3 hover:bg-white/5">
-    Филиалы
-  </Link>
+            <Link
+              href="/branches"
+              className="block rounded-xl px-4 py-3 hover:bg-white/5"
+            >
+              Филиалы
+            </Link>
 
-  <Link href="/employees" className="block rounded-xl px-4 py-3 hover:bg-white/5">
-    Сотрудники
-  </Link>
+            <Link
+              href="/employees"
+              className="block rounded-xl px-4 py-3 hover:bg-white/5"
+            >
+              Сотрудники
+            </Link>
 
-  <Link href="/shifts" className="block rounded-xl px-4 py-3 hover:bg-white/5">
-    График смен
-  </Link>
-</nav>
+            <Link
+              href="/shifts"
+              className="block rounded-xl px-4 py-3 hover:bg-white/5"
+            >
+              График смен
+            </Link>
+          </nav>
         </aside>
 
         <section className="flex-1 p-5 md:p-8">
@@ -209,34 +222,14 @@ export default function Home() {
             </div>
           </div>
 
-          <div className="grid grid-cols-1 xl:grid-cols-2 gap-5 mt-5">
-            <div className="rounded-2xl border border-white/10 bg-neutral-900 p-5">
-              <h3 className="text-xl font-semibold mb-3">График сотрудников</h3>
-              <div className="h-80 w-full">
-                {employeeChartData.length > 0 ? (
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart
-                      data={employeeChartData}
-                      margin={{ top: 10, right: 10, left: 0, bottom: 10 }}
-                    >
-                      <CartesianGrid strokeDasharray="3 3" stroke="#333" />
-                      <XAxis dataKey="name" stroke="#aaa" />
-                      <YAxis stroke="#aaa" allowDecimals={false} />
-                      <Tooltip />
-                      <Bar dataKey="employees" fill="#16a34a" />
-                    </BarChart>
-                  </ResponsiveContainer>
-                ) : (
-                  <div className="h-full flex items-center justify-center text-white/40">
-                    Нет данных по сотрудникам
-                  </div>
-                )}
-              </div>
-            </div>
+ <div className="mt-5">
+  
+
+
 
             <div className="rounded-2xl border border-white/10 bg-neutral-900 p-5">
               <h3 className="text-xl font-semibold mb-3">График проверок филиалов</h3>
-              <div className="h-80 w-full">
+              <div className="h-80 w-full max-w-[1000px] mx-auto">
                 {inspectionChartData.length > 0 ? (
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart
@@ -257,6 +250,11 @@ export default function Home() {
                 )}
               </div>
             </div>
+          </div>
+
+          <div className="mt-8 rounded-2xl border border-white/10 bg-neutral-900 p-5">
+            <h3 className="text-xl font-semibold mb-4">График смен</h3>
+            <ShiftCalendar />
           </div>
         </section>
       </div>
