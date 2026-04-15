@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 
 type ShiftType = "Д" | "Н" | "В";
 
@@ -85,15 +85,54 @@ function nextShift(current: ShiftType): ShiftType {
   return "Д";
 }
 
+function shuffleArray<T>(array: T[]) {
+  const copy = [...array];
+
+  for (let i = copy.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [copy[i], copy[j]] = [copy[j], copy[i]];
+  }
+
+  return copy;
+}
+
 function createRandomAssignments(employees: Employee[]) {
   const result: Record<number, string[]> = {};
 
   for (const employee of employees) {
-    result[employee.id] = employee.shifts.map((shift) => {
-      if (shift === "В") return "";
-      const randomIndex = Math.floor(Math.random() * branches.length);
-      return branches[randomIndex];
-    });
+    const assignments = Array.from({ length: employee.shifts.length }, () => "");
+    const usageCount: Record<string, number> = {};
+
+    const workDayIndexes = employee.shifts
+      .map((shift, index) => (shift === "В" ? -1 : index))
+      .filter((index) => index !== -1);
+
+    let availablePool: string[] = [];
+
+    for (const dayIndex of workDayIndexes) {
+      let allowedBranches = branches.filter((branch) => (usageCount[branch] || 0) < 2);
+
+      if (allowedBranches.length === 0) {
+        allowedBranches = branches;
+      }
+
+      if (availablePool.length === 0) {
+        availablePool = shuffleArray(allowedBranches);
+      } else {
+        availablePool = availablePool.filter((branch) => (usageCount[branch] || 0) < 2);
+
+        if (availablePool.length === 0) {
+          availablePool = shuffleArray(allowedBranches);
+        }
+      }
+
+      const selectedBranch = availablePool.shift() || allowedBranches[0];
+
+      assignments[dayIndex] = selectedBranch;
+      usageCount[selectedBranch] = (usageCount[selectedBranch] || 0) + 1;
+    }
+
+    result[employee.id] = assignments;
   }
 
   return result;
@@ -102,9 +141,8 @@ function createRandomAssignments(employees: Employee[]) {
 export default function Calendar() {
   const [employees, setEmployees] = useState<Employee[]>(initialEmployees);
   const [isEditing, setIsEditing] = useState(false);
-  const [assignments, setAssignments] = useState<Record<number, string[]>>(
-    createRandomAssignments(initialEmployees)
-  );
+  const [assignments, setAssignments] = useState<Record<number, string[]>>({});
+  const [isMounted, setIsMounted] = useState(false);
 
   const days = useMemo(
     () =>
@@ -114,6 +152,11 @@ export default function Calendar() {
       })),
     []
   );
+
+  useEffect(() => {
+    setAssignments(createRandomAssignments(initialEmployees));
+    setIsMounted(true);
+  }, []);
 
   function handleNameChange(employeeId: number, value: string) {
     setEmployees((prev) =>
@@ -167,7 +210,7 @@ export default function Calendar() {
   function handleBranchChange(employeeId: number, dayIndex: number, value: string) {
     setAssignments((prev) => ({
       ...prev,
-      [employeeId]: prev[employeeId].map((branch, index) =>
+      [employeeId]: (prev[employeeId] || []).map((branch, index) =>
         index === dayIndex ? value : branch
       ),
     }));
@@ -208,13 +251,13 @@ export default function Calendar() {
   }
 
   return (
-    <div className="w-full rounded-2xl border border-white/10 bg-neutral-950 p-4 md:p-6">
+    <div className="w-full rounded-2xl border border-white/10 bg-neutral-950 p-3 md:p-4">
       <div className="mb-5 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div>
-          <h2 className="text-xl font-bold text-white md:text-2xl">
+          <h2 className="text-lg font-bold text-white md:text-xl">
             График работы сотрудников СКП за апрель
           </h2>
-          <p className="mt-1 text-sm text-white/60">
+          <p className="mt-1 text-xs text-white/60 md:text-sm">
             Нажимай на ячейки в режиме редактирования: Д → Н → В
           </p>
         </div>
@@ -249,24 +292,24 @@ export default function Calendar() {
       </div>
 
       <div className="overflow-x-auto">
-        <table className="w-max min-w-full border-collapse text-sm">
+        <table className="w-max min-w-full border-collapse text-xs md:text-sm">
           <thead>
             <tr className="bg-neutral-800 text-white">
               <th
                 rowSpan={2}
-                className="border border-neutral-700 px-3 py-3 text-center font-semibold"
+                className="border border-neutral-700 px-2 py-2 text-center font-semibold"
               >
                 Должность
               </th>
               <th
                 rowSpan={2}
-                className="border border-neutral-700 px-3 py-3 text-center font-semibold"
+                className="border border-neutral-700 px-2 py-2 text-center font-semibold"
               >
                 ФИО
               </th>
               <th
                 rowSpan={2}
-                className="border border-neutral-700 px-3 py-3 text-center font-semibold"
+                className="border border-neutral-700 px-1.5 py-1.5 text-center font-semibold"
               >
                 Кол-во
                 <br />
@@ -297,8 +340,8 @@ export default function Calendar() {
 
           <tbody>
             {employees.map((employee) => (
-              <>
-                <tr key={`shift-${employee.id}`} className="bg-neutral-950 text-white">
+              <Fragment key={employee.id}>
+                <tr className="bg-neutral-950 text-white">
                   <td className="border border-neutral-700 px-2 py-2 align-middle">
                     {isEditing ? (
                       <input
@@ -356,7 +399,7 @@ export default function Calendar() {
                   ))}
                 </tr>
 
-                <tr key={`branch-${employee.id}`} className="bg-neutral-900/40 text-white/80">
+                <tr className="bg-neutral-900/40 text-white/80">
                   <td className="border border-neutral-700 px-2 py-2 text-xs" colSpan={3}>
                     Филиалы проверок
                   </td>
@@ -368,7 +411,7 @@ export default function Calendar() {
                     return (
                       <td
                         key={`${employee.id}-branch-${day.dayNumber}`}
-                        className="border border-neutral-700 px-1 py-2 text-center text-[10px] leading-tight min-w-[72px]"
+                        className="min-w-[72px] border border-neutral-700 px-1 py-2 text-center text-[10px] leading-tight"
                       >
                         {shift === "В" ? (
                           <span className="text-white/20">—</span>
@@ -387,13 +430,13 @@ export default function Calendar() {
                             ))}
                           </select>
                         ) : (
-                          <span>{branch}</span>
+                          <span>{isMounted ? branch : ""}</span>
                         )}
                       </td>
                     );
                   })}
                 </tr>
-              </>
+              </Fragment>
             ))}
           </tbody>
         </table>

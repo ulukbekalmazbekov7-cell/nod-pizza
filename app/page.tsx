@@ -1,9 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import ShiftCalendar from "./components/Calendar";
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import ShiftCalendar from "./components/Calendar";
 import {
   BarChart,
   Bar,
@@ -14,63 +14,42 @@ import {
   CartesianGrid,
 } from "recharts";
 
-type EmployeeChartItem = {
-  name: string;
-  employees: number;
-};
-
 type InspectionChartItem = {
   name: string;
   inspections: number;
 };
 
 export default function Home() {
-  const [employeeChartData, setEmployeeChartData] = useState<EmployeeChartItem[]>([]);
   const [inspectionChartData, setInspectionChartData] = useState<InspectionChartItem[]>([]);
-  const [employeesCount, setEmployeesCount] = useState(0);
   const [inspectionsCount, setInspectionsCount] = useState(0);
   const [branchesCount, setBranchesCount] = useState(0);
+  const [employeesCount, setEmployeesCount] = useState(0);
 
   useEffect(() => {
     const fetchDashboard = async () => {
       const { data: branchesData } = await supabase.from("branches").select("id, name");
       setBranchesCount(branchesData?.length || 0);
 
-      const { data: emp } = await supabase
-        .from("employees")
-        .select("branch_id, branches(name)");
+      const { data: employeesData } = await supabase.from("employees").select("id");
+      setEmployeesCount(employeesData?.length || 0);
 
-      const empGrouped: Record<string, number> = {};
-      (emp || []).forEach((item: any) => {
-        const name = item.branches?.name || "Без филиала";
-        empGrouped[name] = (empGrouped[name] || 0) + 1;
-      });
-
-      const empResult = Object.entries(empGrouped).map(([name, count]) => ({
-        name,
-        employees: count,
-      }));
-
-      setEmployeeChartData(empResult);
-      setEmployeesCount((emp || []).length);
-
-      const { data: insp } = await supabase
+      const { data: inspectionsData } = await supabase
         .from("inspections")
         .select("branch_id, branches(name)");
 
-      const inspGrouped: Record<string, number> = {};
-      (insp || []).forEach((item: any) => {
+      const grouped: Record<string, number> = {};
+      (inspectionsData || []).forEach((item: any) => {
         const name = item.branches?.name || "Без филиала";
-        inspGrouped[name] = (inspGrouped[name] || 0) + 1;
+        grouped[name] = (grouped[name] || 0) + 1;
       });
 
-      const inspResult = Object.entries(inspGrouped).map(([name, count]) => ({
+      const result = Object.entries(grouped).map(([name, count]) => ({
         name,
         inspections: count,
       }));
 
-      setInspectionChartData(inspResult);
-      setInspectionsCount((insp || []).length);
+      setInspectionChartData(result);
+      setInspectionsCount((inspectionsData || []).length);
     };
 
     fetchDashboard();
@@ -98,10 +77,10 @@ export default function Home() {
   return (
     <main className="min-h-screen bg-neutral-950 text-white">
       <div className="flex">
-        <aside className="hidden md:flex w-64 min-h-screen border-r border-white/10 bg-neutral-900/60 p-5 flex-col">
+        <aside className="hidden min-h-screen w-64 flex-col border-r border-white/10 bg-neutral-900/60 p-5 md:flex">
           <div className="mb-8">
             <h1 className="text-2xl font-bold">НОД Пицца</h1>
-            <p className="text-sm text-white/60 mt-1">QC Портал</p>
+            <p className="mt-1 text-sm text-white/60">QC Портал</p>
           </div>
 
           <nav className="space-y-2 text-sm">
@@ -109,54 +88,47 @@ export default function Home() {
               Главная
             </Link>
 
-            <Link
-              href="/inspections"
-              className="block rounded-xl px-4 py-3 hover:bg-white/5"
-            >
+            <Link href="/shifts" className="block rounded-xl px-4 py-3 hover:bg-white/5">
+              График смен
+            </Link>
+
+            <Link href="/inspections" className="block rounded-xl px-4 py-3 hover:bg-white/5">
               Проверки
             </Link>
 
-            <Link
-              href="/branches"
-              className="block rounded-xl px-4 py-3 hover:bg-white/5"
-            >
+            <Link href="/branches" className="block rounded-xl px-4 py-3 hover:bg-white/5">
               Филиалы
             </Link>
 
-            <Link
-              href="/employees"
-              className="block rounded-xl px-4 py-3 hover:bg-white/5"
-            >
+            <Link href="/employees" className="block rounded-xl px-4 py-3 hover:bg-white/5">
               Сотрудники
-            </Link>
-
-            <Link
-              href="/shifts"
-              className="block rounded-xl px-4 py-3 hover:bg-white/5"
-            >
-              График смен
             </Link>
           </nav>
         </aside>
 
         <section className="flex-1 p-5 md:p-8">
-          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-8">
+          <div className="mb-8 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
             <div>
               <h2 className="text-3xl font-bold">Дашборд контроля качества</h2>
-              <p className="text-white/60 mt-2">
+              <p className="mt-2 text-white/60">
                 Обзор проверок, филиалов, сотрудников и критических замечаний
               </p>
             </div>
 
             <Link
               href="/inspections"
-              className="inline-flex rounded-xl bg-green-600 hover:bg-green-500 px-5 py-3 font-medium"
+              className="inline-flex rounded-xl bg-green-600 px-5 py-3 font-medium hover:bg-green-500"
             >
               + Новая проверка
             </Link>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-8">
+          <div className="mb-8 rounded-2xl border border-white/10 bg-neutral-900 p-5">
+            <h3 className="mb-4 text-xl font-semibold">График смен</h3>
+            <ShiftCalendar />
+          </div>
+
+          <div className="mb-8 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
             {stats.map((item) => (
               <div
                 key={item.title}
@@ -168,9 +140,9 @@ export default function Home() {
             ))}
           </div>
 
-          <div className="grid grid-cols-1 xl:grid-cols-3 gap-5">
-            <div className="xl:col-span-2 rounded-2xl border border-white/10 bg-neutral-900 p-5">
-              <div className="flex items-center justify-between mb-4">
+          <div className="grid grid-cols-1 gap-5 xl:grid-cols-3">
+            <div className="rounded-2xl border border-white/10 bg-neutral-900 p-5 xl:col-span-2">
+              <div className="mb-4 flex items-center justify-between">
                 <h3 className="text-xl font-semibold">Последние проверки</h3>
                 <span className="text-sm text-white/50">Последние 3 записи</span>
               </div>
@@ -179,7 +151,7 @@ export default function Home() {
                 {recentChecks.map((check) => (
                   <div
                     key={`${check.branch}-${check.date}`}
-                    className="rounded-xl bg-white/5 p-4 flex flex-col md:flex-row md:items-center md:justify-between gap-3"
+                    className="flex flex-col gap-3 rounded-xl bg-white/5 p-4 md:flex-row md:items-center md:justify-between"
                   >
                     <div>
                       <p className="font-medium">{check.branch}</p>
@@ -198,11 +170,11 @@ export default function Home() {
             </div>
 
             <div className="rounded-2xl border border-white/10 bg-neutral-900 p-5">
-              <div className="flex items-center justify-between mb-4">
+              <div className="mb-4 flex items-center justify-between">
                 <h3 className="text-xl font-semibold">Филиалы</h3>
                 <Link
                   href="/branches"
-                  className="rounded-lg bg-blue-600 hover:bg-blue-500 px-3 py-2 text-sm"
+                  className="rounded-lg bg-blue-600 px-3 py-2 text-sm hover:bg-blue-500"
                 >
                   + Добавить
                 </Link>
@@ -212,24 +184,20 @@ export default function Home() {
                 {branchesPreview.map((branch) => (
                   <div key={branch.name} className="rounded-xl bg-white/5 p-4">
                     <p className="font-medium">{branch.name}</p>
-                    <p className="text-sm text-white/50 mt-1">
+                    <p className="mt-1 text-sm text-white/50">
                       Ответственный: {branch.manager}
                     </p>
-                    <p className="text-sm mt-2">{branch.status}</p>
+                    <p className="mt-2 text-sm">{branch.status}</p>
                   </div>
                 ))}
               </div>
             </div>
           </div>
 
- <div className="mt-5">
-  
-
-
-
+          <div className="mt-5">
             <div className="rounded-2xl border border-white/10 bg-neutral-900 p-5">
-              <h3 className="text-xl font-semibold mb-3">График проверок филиалов</h3>
-              <div className="h-80 w-full max-w-[1000px] mx-auto">
+              <h3 className="mb-3 text-xl font-semibold">График проверок филиалов</h3>
+              <div className="mx-auto h-80 w-full max-w-[1000px]">
                 {inspectionChartData.length > 0 ? (
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart
@@ -244,17 +212,12 @@ export default function Home() {
                     </BarChart>
                   </ResponsiveContainer>
                 ) : (
-                  <div className="h-full flex items-center justify-center text-white/40">
+                  <div className="flex h-full items-center justify-center text-white/40">
                     Нет данных по проверкам
                   </div>
                 )}
               </div>
             </div>
-          </div>
-
-          <div className="mt-8 rounded-2xl border border-white/10 bg-neutral-900 p-5">
-            <h3 className="text-xl font-semibold mb-4">График смен</h3>
-            <ShiftCalendar />
           </div>
         </section>
       </div>
