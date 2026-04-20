@@ -78,10 +78,16 @@ export default function Home() {
     <main className="min-h-screen bg-neutral-950 text-white">
       <div className="flex">
         <aside className="hidden min-h-screen w-64 flex-col border-r border-white/10 bg-neutral-900/60 p-5 md:flex">
-          <div className="mb-8">
-            <h1 className="text-2xl font-bold">НОД Пицца</h1>
-            <p className="mt-1 text-sm text-white/60">QC Портал</p>
-          </div>
+         <div className="mb-8">
+  <Link href="/" className="block group">
+    <h1 className="text-2xl font-bold transition group-hover:text-blue-400 cursor-pointer">
+      Нод Пицца
+    </h1>
+    <p className="mt-1 text-sm text-white/60">
+      QC Портал
+    </p>
+  </Link>
+</div>
 
           <nav className="space-y-2 text-sm">
             <Link href="/" className="block rounded-xl bg-white/10 px-4 py-3">
