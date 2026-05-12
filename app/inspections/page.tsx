@@ -3,15 +3,25 @@
 import { useEffect, useMemo, useState } from "react";
 import InspectionCriteriaForm, {
   type CriterionFormValue,
+  type NewCriterionDraft,
 } from "@/app/components/inspections/InspectionCriteriaForm";
 import EmptyState from "@/app/components/EmptyState";
 import LoadingState from "@/app/components/LoadingState";
 import { useConfirmDialog } from "@/app/components/ConfirmDialog";
 import { useProfile } from "@/app/components/ProfileProvider";
 import { useToast } from "@/app/components/ToastProvider";
-import { filterAccessibleBranches, selectableBranchesForInspection } from "@/lib/auth/roles";
+import { filterAccessibleBranches, canManageInspectionCatalog, selectableBranchesForInspection } from "@/lib/auth/roles";
 import { writeAuditLog } from "@/lib/audit";
-import { flattenCriteria, fetchInspectionCatalog } from "@/lib/inspectionCriteria";
+import {
+  appendCriterionToCategories,
+  createInspectionCriterion,
+  flattenCriteria,
+  fetchInspectionCatalog,
+} from "@/lib/inspectionCriteria";
+import {
+  buildInspectorOptions,
+  fetchInspectorProfiles,
+} from "@/lib/peopleData";
 import {
   fetchBranches,
   fetchInspectionPhotos,
@@ -94,6 +104,7 @@ export default function InspectionsPage() {
   const [filterStatus, setFilterStatus] = useState<InspectionStatus | "all">("all");
   const [filterDateFrom, setFilterDateFrom] = useState("");
   const [filterDateTo, setFilterDateTo] = useState("");
+  const [inspectorOptions, setInspectorOptions] = useState<string[]>([]);
 
   const [form, setForm] = useState<InspectionForm>({
     branch_id: 0,
@@ -121,6 +132,8 @@ export default function InspectionsPage() {
     return assignedBranches.length === 0 && branches.length > 0;
   }, [assignedBranches.length, branches.length, profile]);
 
+  const canManageCatalog = canManageInspectionCatalog(profile);
+
   const previewScore = useMemo(() => {
     const results = Object.entries(criterionValues).map(([criterion_id, value]) => ({
       criterion_id,
@@ -133,7 +146,7 @@ export default function InspectionsPage() {
     setLoading(true);
 
     try {
-      const [branchesData, catalog] = await Promise.all([
+      const [branchesData, catalog, inspectorProfiles] = await Promise.all([
         fetchBranches(supabase).catch((error) => {
           const message = error instanceof Error ? error.message : "Не удалось загрузить филиалы";
           pushToast(message, "error");
@@ -144,7 +157,21 @@ export default function InspectionsPage() {
           pushToast(message, "error");
           return [] as InspectionCategory[];
         }),
+        fetchInspectorProfiles(supabase).catch((error) => {
+          const message =
+            error instanceof Error ? error.message : "Не удалось загрузить проверяющих";
+          const canUseCurrentProfile =
+            profile && (profile.role === "admin" || profile.role === "qc");
+          if (!canUseCurrentProfile) {
+            pushToast(message, "error");
+          }
+          return [];
+        }),
       ]);
+
+      setInspectorOptions(
+        buildInspectorOptions(inspectorProfiles, profile, session?.user ?? null)
+      );
 
       setBranches(branchesData);
       setCategories(catalog);
@@ -209,13 +236,14 @@ export default function InspectionsPage() {
 
   useEffect(() => {
     void fetchData();
-  }, []);
+  }, [profile?.id, profile?.role]);
 
   useEffect(() => {
-    if (profile?.full_name && !form.inspector) {
+    if (!profile?.full_name || form.inspector) return;
+    if (inspectorOptions.includes(profile.full_name)) {
       setForm((prev) => ({ ...prev, inspector: profile.full_name ?? "" }));
     }
-  }, [profile?.full_name, form.inspector]);
+  }, [form.inspector, inspectorOptions, profile?.full_name]);
 
   useEffect(() => {
     if (categories.length > 0 && Object.keys(criterionValues).length === 0) {
@@ -249,6 +277,40 @@ export default function InspectionsPage() {
 
   const handleCriterionChange = (criterionId: string, value: CriterionFormValue) => {
     setCriterionValues((prev) => ({ ...prev, [criterionId]: value }));
+  };
+
+  const handleCreateCriterion = async (subcategoryId: string, draft: NewCriterionDraft) => {
+    const subcategory = categories
+      .flatMap((category) => category.subcategories ?? [])
+      .find((item) => item.id === subcategoryId);
+
+    if (!subcategory) {
+      throw new Error("Подгруппа не найдена");
+    }
+
+    const criterion = await createInspectionCriterion(supabase, {
+      subcategory_id: subcategoryId,
+      title: draft.title,
+      severity: draft.severity,
+      penalty_points: draft.penalty_points,
+      description: draft.description ?? null,
+      sort_order: (subcategory.criteria?.length ?? 0) + 1,
+    });
+
+    setCategories((prev) => appendCriterionToCategories(prev, subcategoryId, criterion));
+    setCriterionValues((prev) => ({
+      ...prev,
+      [criterion.id]: { answer: "no", comment: "" },
+    }));
+
+    await writeAuditLog(supabase, "inspection_criterion_created", "inspection_criterion", criterion.id, {
+      subcategory_id: subcategoryId,
+      title: criterion.title,
+      severity: criterion.severity,
+      penalty_points: criterion.penalty_points,
+    });
+
+    pushToast("Критерий добавлен в подгруппу", "success");
   };
 
   const handleSave = async () => {
@@ -522,12 +584,43 @@ export default function InspectionsPage() {
               className="rounded-xl bg-neutral-800 px-3 py-2"
             />
 
-            <input
-              placeholder="Проверяющий"
-              value={form.inspector}
-              onChange={(e) => setForm({ ...form, inspector: e.target.value })}
+            <select
+              value={
+                inspectorOptions.includes(form.inspector) || form.inspector === ""
+                  ? form.inspector
+                  : "__custom__"
+              }
+              onChange={(event) => {
+                const value = event.target.value;
+                if (value === "__custom__") {
+                  setForm({ ...form, inspector: "" });
+                  return;
+                }
+                setForm({ ...form, inspector: value });
+              }}
               className="rounded-xl bg-neutral-800 px-3 py-2"
-            />
+            >
+              <option value="">Выбери проверяющего</option>
+              {inspectorOptions.map((name) => (
+                <option key={name} value={name}>
+                  {name}
+                </option>
+              ))}
+              <option value="__custom__">Другой проверяющий</option>
+            </select>
+            {!inspectorOptions.includes(form.inspector) ? (
+              <input
+                placeholder="ФИО проверяющего"
+                value={form.inspector}
+                onChange={(event) => setForm({ ...form, inspector: event.target.value })}
+                className="rounded-xl bg-neutral-800 px-3 py-2"
+              />
+            ) : null}
+            {inspectorOptions.length === 0 ? (
+              <p className="md:col-span-2 text-sm text-amber-200/90">
+                Список проверяющих пуст. Добавьте пользователей с ролями admin или qc в profiles.
+              </p>
+            ) : null}
 
             <select
               value={form.status}
@@ -553,6 +646,8 @@ export default function InspectionsPage() {
             categories={categories}
             values={criterionValues}
             onChange={handleCriterionChange}
+            canManageCriteria={canManageCatalog}
+            onCreateCriterion={canManageCatalog ? handleCreateCriterion : undefined}
           />
 
           <div className="rounded-2xl border border-white/10 bg-neutral-950/50 p-4">

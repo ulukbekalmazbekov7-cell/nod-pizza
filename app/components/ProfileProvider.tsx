@@ -9,8 +9,9 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import type { Session } from "@supabase/supabase-js";
+import type { Session, User } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
+import { mapProfileRow, sessionUserDisplayName } from "@/lib/profileData";
 import type { Profile } from "@/lib/types";
 
 type ProfileContextValue = {
@@ -23,17 +24,11 @@ type ProfileContextValue = {
 
 const ProfileContext = createContext<ProfileContextValue | null>(null);
 
-function mapProfile(row: Record<string, unknown>): Profile {
+function mapProfile(row: Record<string, unknown>, sessionUser?: User | null): Profile {
+  const profile = mapProfileRow(row);
   return {
-    id: String(row.id),
-    role: row.role as Profile["role"],
-    full_name: (row.full_name as string | null) ?? null,
-    branch_id: row.branch_id != null ? Number(row.branch_id) : null,
-    branch_ids: Array.isArray(row.branch_ids)
-      ? row.branch_ids.map((id) => Number(id))
-      : [],
-    created_at: row.created_at as string | undefined,
-    updated_at: row.updated_at as string | undefined,
+    ...profile,
+    full_name: profile.full_name ?? sessionUserDisplayName(sessionUser),
   };
 }
 
@@ -43,31 +38,53 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const loadProfile = useCallback(async (userId: string) => {
-    const { data, error: profileError } = await supabase
+  const loadProfile = useCallback(async (userId: string, sessionUser?: User | null) => {
+    const extended = await supabase
       .from("profiles")
       .select("id, role, full_name, branch_id, branch_ids, created_at, updated_at")
       .eq("id", userId)
       .maybeSingle();
 
-    if (profileError) {
-      setError(profileError.message);
+    if (
+      extended.error &&
+      extended.error.code !== "42703" &&
+      extended.error.code !== "PGRST204"
+    ) {
+      setError(extended.error.message);
       setProfile(null);
       return;
     }
 
-    if (!data) {
+    let row = extended.data as Record<string, unknown> | null;
+
+    if (!row && (extended.error?.code === "42703" || extended.error?.code === "PGRST204")) {
+      const base = await supabase
+        .from("profiles")
+        .select("id, role, branch_id")
+        .eq("id", userId)
+        .maybeSingle();
+
+      if (base.error) {
+        setError(base.error.message);
+        setProfile(null);
+        return;
+      }
+
+      row = base.data as Record<string, unknown> | null;
+    }
+
+    if (!row) {
       setProfile({
         id: userId,
         role: "qc",
-        full_name: null,
+        full_name: sessionUserDisplayName(sessionUser),
         branch_id: null,
         branch_ids: [],
       });
       return;
     }
 
-    setProfile(mapProfile(data as Record<string, unknown>));
+    setProfile(mapProfile(row, sessionUser));
     setError(null);
   }, []);
 
@@ -84,7 +101,7 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    await loadProfile(currentSession.user.id);
+    await loadProfile(currentSession.user.id, currentSession.user);
     setLoading(false);
   }, [loadProfile]);
 
@@ -106,7 +123,7 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
         return;
       }
 
-      await loadProfile(currentSession.user.id);
+      await loadProfile(currentSession.user.id, currentSession.user);
       if (!cancelled) setLoading(false);
     };
 
@@ -121,7 +138,7 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
         setLoading(false);
         return;
       }
-      void loadProfile(nextSession.user.id).finally(() => {
+      void loadProfile(nextSession.user.id, nextSession.user).finally(() => {
         if (!cancelled) setLoading(false);
       });
     });

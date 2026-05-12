@@ -1,24 +1,23 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useConfirmDialog } from "@/app/components/ConfirmDialog";
+import LoadingState from "@/app/components/LoadingState";
 import { useProfile } from "@/app/components/ProfileProvider";
 import { useToast } from "@/app/components/ToastProvider";
-import { canManageEmployees } from "@/lib/auth/roles";
+import { ROLE_LABELS, canManageEmployees } from "@/lib/auth/roles";
 import { writeAuditLog } from "@/lib/audit";
+import {
+  employeeNameSet,
+  fetchAppProfiles,
+  fetchEmployeesDirectory,
+} from "@/lib/peopleData";
 import { supabase } from "@/lib/supabase";
+import type { Employee, Profile } from "@/lib/types";
 
 type Branch = {
   id: number;
   name: string;
-};
-
-type Employee = {
-  id?: number;
-  full_name: string;
-  position: string;
-  status: string;
-  branch_id: number | null;
 };
 
 const emptyEmployee: Employee = {
@@ -33,58 +32,97 @@ export default function EmployeesPage() {
   const { pushToast } = useToast();
   const { confirm, dialog } = useConfirmDialog();
   const canEdit = canManageEmployees(profile);
-  const [employees, setEmployees] = useState<any[]>([]);
+
+  const [employees, setEmployees] = useState<Employee[]>([]);
+  const [appUsers, setAppUsers] = useState<Profile[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
+  const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState<Employee>(emptyEmployee);
 
+  const existingEmployeeNames = useMemo(() => employeeNameSet(employees), [employees]);
+
   const fetchData = async () => {
-    const { data: employeesData, error: employeesError } = await supabase
-      .from("employees")
-      .select("*, branches(name)")
-      .order("created_at", { ascending: false });
+    setLoading(true);
 
-    const { data: branchesData, error: branchesError } = await supabase
-      .from("branches")
-      .select("id, name")
-      .order("name", { ascending: true });
+    try {
+      const [employeesData, branchesResult] = await Promise.all([
+        fetchEmployeesDirectory(supabase),
+        supabase.from("branches").select("id, name").order("name", { ascending: true }),
+      ]);
 
-    if (employeesError) {
-      console.error("Ошибка загрузки сотрудников:", employeesError);
+      if (branchesResult.error) {
+        pushToast("Не удалось загрузить филиалы", "error");
+      }
+
+      setEmployees(employeesData);
+      setBranches((branchesResult.data ?? []) as Branch[]);
+
+      if (canEdit) {
+        const profiles = await fetchAppProfiles(supabase).catch((error) => {
+          const message =
+            error instanceof Error ? error.message : "Не удалось загрузить пользователей";
+          pushToast(message, "error");
+          return [] as Profile[];
+        });
+        setAppUsers(profiles);
+      } else {
+        setAppUsers([]);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Не удалось загрузить сотрудников";
+      pushToast(message, "error");
+    } finally {
+      setLoading(false);
     }
-
-    if (branchesError) {
-      console.error("Ошибка загрузки филиалов:", branchesError);
-    }
-
-    setEmployees(employeesData || []);
-    setBranches(branchesData || []);
   };
 
   useEffect(() => {
-    fetchData();
-  }, []);
+    void fetchData();
+  }, [canEdit]);
+
+  const openCreateForm = (seed?: Partial<Employee>) => {
+    setForm({
+      ...emptyEmployee,
+      ...seed,
+    });
+    setShowForm(true);
+  };
 
   const handleSave = async () => {
-    if (!form.full_name.trim()) return;
-
-    const { error } = await supabase.from("employees").insert([
-      {
-        full_name: form.full_name,
-        position: form.position,
-        status: form.status,
-        branch_id: form.branch_id,
-      },
-    ]);
-
-    if (error) {
-      console.error("Ошибка добавления сотрудника:", error);
+    if (!form.full_name.trim()) {
+      pushToast("Укажите ФИО сотрудника", "error");
       return;
     }
 
+    const { data, error } = await supabase
+      .from("employees")
+      .insert([
+        {
+          full_name: form.full_name.trim(),
+          position: form.position.trim(),
+          status: form.status,
+          branch_id: form.branch_id,
+        },
+      ])
+      .select("id")
+      .single();
+
+    if (error) {
+      pushToast(error.message || "Не удалось создать сотрудника", "error");
+      return;
+    }
+
+    if (data?.id != null) {
+      await writeAuditLog(supabase, "employee_created", "employee", data.id, {
+        full_name: form.full_name.trim(),
+      });
+    }
+
+    pushToast("Сотрудник создан", "success");
     setForm(emptyEmployee);
     setShowForm(false);
-    fetchData();
+    void fetchData();
   };
 
   const handleDelete = async (id?: number) => {
@@ -106,54 +144,72 @@ export default function EmployeesPage() {
 
     await writeAuditLog(supabase, "employee_deleted", "employee", id);
     pushToast("Сотрудник удалён", "success");
-    fetchData();
+    void fetchData();
   };
 
+  const handleCreateFromUser = (user: Profile) => {
+    openCreateForm({
+      full_name: user.full_name?.trim() || "Без имени",
+      position: ROLE_LABELS[user.role],
+      status: "Работает",
+      branch_id: user.branch_id,
+    });
+  };
+
+  if (loading) {
+    return (
+      <main className="min-h-screen bg-neutral-950 p-6 text-white">
+        <LoadingState label="Загрузка сотрудников…" />
+      </main>
+    );
+  }
+
   return (
-    <main className="min-h-screen bg-neutral-950 text-white p-6">
+    <main className="min-h-screen bg-neutral-950 p-6 text-white">
       {dialog}
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-3xl font-bold">Сотрудники</h1>
+
+      <div className="mb-6 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+        <div>
+          <h1 className="text-3xl font-bold">Сотрудники</h1>
+          <p className="mt-1 text-sm text-white/60">
+            Справочник для проверок и графиков. Учётные записи Auth создаются в Supabase.
+          </p>
+        </div>
 
         {canEdit ? (
           <button
-            onClick={() => setShowForm(!showForm)}
-            className="bg-blue-600 hover:bg-blue-500 px-4 py-2 rounded-lg"
+            type="button"
+            onClick={() => openCreateForm()}
+            className="rounded-lg bg-blue-600 px-4 py-2 hover:bg-blue-500"
           >
-            + Добавить сотрудника
+            Создать сотрудника
           </button>
         ) : null}
       </div>
 
-      {showForm && (
-        <div className="bg-neutral-900 p-4 rounded-xl mb-6 border border-white/10">
-          <h2 className="text-xl mb-4">Новый сотрудник</h2>
+      {showForm && canEdit ? (
+        <div className="mb-6 rounded-xl border border-white/10 bg-neutral-900 p-4">
+          <h2 className="mb-4 text-xl">Новый сотрудник</h2>
 
           <div className="grid gap-3">
             <input
               placeholder="ФИО"
               value={form.full_name}
-              onChange={(e) =>
-                setForm({ ...form, full_name: e.target.value })
-              }
-              className="bg-neutral-800 p-2 rounded"
+              onChange={(event) => setForm({ ...form, full_name: event.target.value })}
+              className="rounded bg-neutral-800 p-2"
             />
 
             <input
               placeholder="Должность"
               value={form.position}
-              onChange={(e) =>
-                setForm({ ...form, position: e.target.value })
-              }
-              className="bg-neutral-800 p-2 rounded"
+              onChange={(event) => setForm({ ...form, position: event.target.value })}
+              className="rounded bg-neutral-800 p-2"
             />
 
             <select
               value={form.status}
-              onChange={(e) =>
-                setForm({ ...form, status: e.target.value })
-              }
-              className="bg-neutral-800 p-2 rounded"
+              onChange={(event) => setForm({ ...form, status: event.target.value })}
+              className="rounded bg-neutral-800 p-2"
             >
               <option>Работает</option>
               <option>Отпуск</option>
@@ -163,13 +219,13 @@ export default function EmployeesPage() {
 
             <select
               value={form.branch_id ?? ""}
-              onChange={(e) =>
+              onChange={(event) =>
                 setForm({
                   ...form,
-                  branch_id: e.target.value ? Number(e.target.value) : null,
+                  branch_id: event.target.value ? Number(event.target.value) : null,
                 })
               }
-              className="bg-neutral-800 p-2 rounded"
+              className="rounded bg-neutral-800 p-2"
             >
               <option value="">Выбери филиал</option>
               {branches.map((branch) => (
@@ -179,46 +235,117 @@ export default function EmployeesPage() {
               ))}
             </select>
 
-            <button
-              onClick={handleSave}
-              className="bg-green-600 hover:bg-green-500 px-4 py-2 rounded"
-            >
-              Сохранить
-            </button>
-          </div>
-        </div>
-      )}
-
-      <div className="grid gap-4">
-        {employees.map((employee) => (
-          <div
-            key={employee.id}
-            className="bg-neutral-900 p-4 rounded-xl border border-white/10"
-          >
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <h2 className="text-xl font-semibold">{employee.full_name}</h2>
-                <p className="text-white/60 mt-1">
-                  Должность: {employee.position || "Не указана"}
-                </p>
-                <p className="text-white/60">
-                  Филиал: {employee.branches?.name || "Не привязан"}
-                </p>
-                <p className="mt-2">{employee.status}</p>
-              </div>
-
-              {canEdit ? (
-                <button
-                  onClick={() => handleDelete(employee.id)}
-                  className="bg-red-600 hover:bg-red-500 px-3 py-2 rounded-lg text-sm"
-                >
-                  Удалить
-                </button>
-              ) : null}
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={handleSave}
+                className="rounded bg-green-600 px-4 py-2 hover:bg-green-500"
+              >
+                Сохранить
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowForm(false);
+                  setForm(emptyEmployee);
+                }}
+                className="rounded border border-white/15 px-4 py-2 text-white/80 hover:bg-white/5"
+              >
+                Отмена
+              </button>
             </div>
           </div>
-        ))}
-      </div>
+        </div>
+      ) : null}
+
+      {canEdit ? (
+        <section className="mb-8">
+          <div className="mb-4 flex items-center justify-between gap-3">
+            <h2 className="text-xl font-semibold">Пользователи системы</h2>
+            <span className="text-sm text-white/50">{appUsers.length}</span>
+          </div>
+
+          {appUsers.length === 0 ? (
+            <p className="rounded-xl border border-white/10 bg-neutral-900 p-4 text-sm text-white/60">
+              Пользователи не найдены. Создайте учётную запись в Supabase Auth и строку в profiles.
+            </p>
+          ) : (
+            <div className="grid gap-3">
+              {appUsers.map((user) => {
+                const normalizedName = user.full_name?.trim().toLocaleLowerCase("ru") ?? "";
+                const alreadyInDirectory =
+                  normalizedName.length > 0 && existingEmployeeNames.has(normalizedName);
+
+                return (
+                  <div
+                    key={user.id}
+                    className="flex flex-col gap-3 rounded-xl border border-white/10 bg-neutral-900 p-4 md:flex-row md:items-center md:justify-between"
+                  >
+                    <div>
+                      <p className="text-lg font-medium">{user.full_name?.trim() || "Без имени"}</p>
+                      <p className="mt-1 text-sm text-white/60">{ROLE_LABELS[user.role]}</p>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => handleCreateFromUser(user)}
+                      disabled={alreadyInDirectory}
+                      className="rounded-lg border border-white/15 px-3 py-2 text-sm text-white/85 hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-45"
+                    >
+                      {alreadyInDirectory ? "Уже в справочнике" : "Создать сотрудника"}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </section>
+      ) : null}
+
+      <section>
+        <div className="mb-4 flex items-center justify-between gap-3">
+          <h2 className="text-xl font-semibold">Справочник сотрудников</h2>
+          <span className="text-sm text-white/50">{employees.length}</span>
+        </div>
+
+        <div className="grid gap-4">
+          {employees.length === 0 ? (
+            <p className="rounded-xl border border-white/10 bg-neutral-900 p-4 text-sm text-white/60">
+              Справочник пуст. Создайте сотрудника вручную или из пользователя системы.
+            </p>
+          ) : (
+            employees.map((employee) => (
+              <div
+                key={employee.id}
+                className="rounded-xl border border-white/10 bg-neutral-900 p-4"
+              >
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <h3 className="text-xl font-semibold">{employee.full_name}</h3>
+                    <p className="mt-1 text-white/60">
+                      Должность: {employee.position || "Не указана"}
+                    </p>
+                    <p className="text-white/60">
+                      Филиал: {employee.branches?.name || "Не привязан"}
+                    </p>
+                    <p className="mt-2">{employee.status}</p>
+                  </div>
+
+                  {canEdit ? (
+                    <button
+                      type="button"
+                      onClick={() => handleDelete(employee.id)}
+                      className="rounded-lg bg-red-600 px-3 py-2 text-sm hover:bg-red-500"
+                    >
+                      Удалить
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </section>
     </main>
   );
 }

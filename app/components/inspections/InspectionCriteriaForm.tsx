@@ -1,27 +1,44 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import type { CriterionAnswer, InspectionCategory, InspectionCriterion } from "@/lib/types";
+import type { CriterionAnswer, CriterionSeverity, InspectionCategory, InspectionCriterion } from "@/lib/types";
 import {
   answerLabel,
+  DEFAULT_PENALTY_BY_SEVERITY,
   effectivePenaltyPoints,
   severityBadgeClass,
   severityLabel,
 } from "@/lib/inspectionScoring";
 
-export type CriterionFormValue = {
-  answer: CriterionAnswer;
-  comment: string;
-  photoFile?: File;
+export type NewCriterionDraft = {
+  title: string;
+  severity: CriterionSeverity;
+  penalty_points?: number;
+  description?: string;
 };
 
 type InspectionCriteriaFormProps = {
   categories: InspectionCategory[];
   values: Record<string, CriterionFormValue>;
   onChange: (criterionId: string, value: CriterionFormValue) => void;
+  canManageCriteria?: boolean;
+  onCreateCriterion?: (subcategoryId: string, draft: NewCriterionDraft) => Promise<void>;
 };
 
 const answerOptions: CriterionAnswer[] = ["yes", "no", "no_data", "not_applicable"];
+const severityOptions: CriterionSeverity[] = [
+  "minor",
+  "medium",
+  "critical",
+  "none",
+  "informational",
+];
+
+export type CriterionFormValue = {
+  answer: CriterionAnswer;
+  comment: string;
+  photoFile?: File;
+};
 
 function countCriteria(category: InspectionCategory) {
   return (category.subcategories ?? []).reduce(
@@ -43,6 +60,8 @@ export default function InspectionCriteriaForm({
   categories,
   values,
   onChange,
+  canManageCriteria = false,
+  onCreateCriterion,
 }: InspectionCriteriaFormProps) {
   const [openCategories, setOpenCategories] = useState<Set<string>>(new Set());
   const [openSubcategories, setOpenSubcategories] = useState<Set<string>>(new Set());
@@ -171,6 +190,12 @@ export default function InspectionCriteriaForm({
                               />
                             );
                           })}
+                          {canManageCriteria && onCreateCriterion ? (
+                            <AddCriterionPanel
+                              subcategoryId={subcategory.id}
+                              onCreateCriterion={onCreateCriterion}
+                            />
+                          ) : null}
                         </div>
                       ) : null}
                     </div>
@@ -271,6 +296,148 @@ function CriterionRow({
           </label>
         </div>
       ) : null}
+    </div>
+  );
+}
+
+function AddCriterionPanel({
+  subcategoryId,
+  onCreateCriterion,
+}: {
+  subcategoryId: string;
+  onCreateCriterion: (subcategoryId: string, draft: NewCriterionDraft) => Promise<void>;
+}) {
+  const [open, setOpen] = useState(false);
+  const [title, setTitle] = useState("");
+  const [severity, setSeverity] = useState<CriterionSeverity>("minor");
+  const [penaltyPoints, setPenaltyPoints] = useState("");
+  const [description, setDescription] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const defaultPenalty = DEFAULT_PENALTY_BY_SEVERITY[severity];
+  const isScored = severity !== "none" && severity !== "informational";
+
+  const resetForm = () => {
+    setTitle("");
+    setSeverity("minor");
+    setPenaltyPoints("");
+    setDescription("");
+    setError(null);
+  };
+
+  const handleSubmit = async () => {
+    const trimmedTitle = title.trim();
+    if (!trimmedTitle) {
+      setError("Укажите название критерия");
+      return;
+    }
+
+    const parsedPenalty = penaltyPoints.trim() ? Number(penaltyPoints) : undefined;
+    if (parsedPenalty != null && (!Number.isFinite(parsedPenalty) || parsedPenalty < 0)) {
+      setError("Штраф должен быть неотрицательным числом");
+      return;
+    }
+
+    setSaving(true);
+    setError(null);
+
+    try {
+      await onCreateCriterion(subcategoryId, {
+        title: trimmedTitle,
+        severity,
+        penalty_points: parsedPenalty,
+        description: description.trim() || undefined,
+      });
+      resetForm();
+      setOpen(false);
+    } catch (submitError) {
+      const message =
+        submitError instanceof Error ? submitError.message : "Не удалось добавить критерий";
+      setError(message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (!open) {
+    return (
+      <div className="px-4 py-3">
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          className="text-sm text-blue-300 hover:text-blue-200"
+        >
+          + Добавить свой критерий
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3 border-t border-white/10 bg-neutral-950/40 px-4 py-4">
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-sm font-medium text-white">Новый критерий в подгруппе</p>
+        <button
+          type="button"
+          onClick={() => {
+            resetForm();
+            setOpen(false);
+          }}
+          className="text-xs text-white/60 hover:text-white/85"
+        >
+          Отмена
+        </button>
+      </div>
+
+      <div className="grid gap-3 md:grid-cols-2">
+        <input
+          placeholder="Название критерия"
+          value={title}
+          onChange={(event) => setTitle(event.target.value)}
+          className="rounded-xl border border-white/10 bg-neutral-950 px-3 py-2 text-sm md:col-span-2"
+        />
+
+        <select
+          value={severity}
+          onChange={(event) => setSeverity(event.target.value as CriterionSeverity)}
+          className="rounded-xl border border-white/10 bg-neutral-950 px-3 py-2 text-sm"
+        >
+          {severityOptions.map((option) => (
+            <option key={option} value={option}>
+              {severityLabel(option)}
+            </option>
+          ))}
+        </select>
+
+        <input
+          type="number"
+          min={0}
+          placeholder={isScored ? `Штраф, по умолчанию ${defaultPenalty}` : "Без штрафа"}
+          value={penaltyPoints}
+          onChange={(event) => setPenaltyPoints(event.target.value)}
+          disabled={!isScored}
+          className="rounded-xl border border-white/10 bg-neutral-950 px-3 py-2 text-sm disabled:opacity-50"
+        />
+
+        <textarea
+          placeholder="Пояснение (необязательно)"
+          value={description}
+          onChange={(event) => setDescription(event.target.value)}
+          className="min-h-16 rounded-xl border border-white/10 bg-neutral-950 px-3 py-2 text-sm md:col-span-2"
+        />
+      </div>
+
+      {error ? <p className="text-sm text-red-300">{error}</p> : null}
+
+      <button
+        type="button"
+        onClick={() => void handleSubmit()}
+        disabled={saving}
+        className="rounded-xl bg-blue-600 px-4 py-2 text-sm disabled:opacity-50"
+      >
+        {saving ? "Сохранение…" : "Добавить в подгруппу"}
+      </button>
     </div>
   );
 }

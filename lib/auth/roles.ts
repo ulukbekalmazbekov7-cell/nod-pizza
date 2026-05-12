@@ -26,6 +26,10 @@ export function canCreateInspection(profile: Profile | null): boolean {
   return Boolean(profile);
 }
 
+export function canManageInspectionCatalog(profile: Profile | null): boolean {
+  return profile?.role === "admin" || profile?.role === "qc";
+}
+
 export function canAccessBranch(profile: Profile | null, branchId: number | null | undefined): boolean {
   if (!profile || branchId == null) return false;
   if (profile.role === "admin") return true;
