@@ -9,7 +9,7 @@ import LoadingState from "@/app/components/LoadingState";
 import { useConfirmDialog } from "@/app/components/ConfirmDialog";
 import { useProfile } from "@/app/components/ProfileProvider";
 import { useToast } from "@/app/components/ToastProvider";
-import { filterAccessibleBranches } from "@/lib/auth/roles";
+import { filterAccessibleBranches, selectableBranchesForInspection } from "@/lib/auth/roles";
 import { writeAuditLog } from "@/lib/audit";
 import { flattenCriteria, fetchInspectionCatalog } from "@/lib/inspectionCriteria";
 import {
@@ -72,7 +72,7 @@ function buildDefaultCriterionValues(categories: InspectionCategory[]) {
 }
 
 export default function InspectionsPage() {
-  const { profile, session } = useProfile();
+  const { profile, session, loading: profileLoading } = useProfile();
   const { pushToast } = useToast();
   const { confirm, dialog } = useConfirmDialog();
 
@@ -106,10 +106,20 @@ export default function InspectionsPage() {
 
   const allCriteria = useMemo(() => flattenCriteria(categories), [categories]);
 
-  const formBranches = useMemo(
+  const assignedBranches = useMemo(
     () => filterAccessibleBranches(profile, branches),
     [branches, profile]
   );
+
+  const selectableBranches = useMemo(
+    () => selectableBranchesForInspection(profile, branches),
+    [branches, profile]
+  );
+
+  const branchAssignmentMissing = useMemo(() => {
+    if (!profile || profile.role === "admin") return false;
+    return assignedBranches.length === 0 && branches.length > 0;
+  }, [assignedBranches.length, branches.length, profile]);
 
   const previewScore = useMemo(() => {
     const results = Object.entries(criterionValues).map(([criterion_id, value]) => ({
@@ -212,6 +222,19 @@ export default function InspectionsPage() {
       setCriterionValues(buildDefaultCriterionValues(categories));
     }
   }, [categories, criterionValues]);
+
+  useEffect(() => {
+    if (!showForm || form.branch_id !== 0) return;
+
+    if (filterBranchId !== "all") {
+      setForm((prev) => ({ ...prev, branch_id: filterBranchId }));
+      return;
+    }
+
+    if (selectableBranches.length === 1 && selectableBranches[0].id != null) {
+      setForm((prev) => ({ ...prev, branch_id: selectableBranches[0].id as number }));
+    }
+  }, [filterBranchId, form.branch_id, selectableBranches, showForm]);
 
   const filteredInspections = useMemo(() => {
     return inspections.filter((item) => {
@@ -427,7 +450,7 @@ export default function InspectionsPage() {
           className="rounded-xl bg-neutral-800 px-3 py-2"
         >
           <option value="all">Все филиалы</option>
-          {branches.map((branch) => (
+          {selectableBranches.map((branch) => (
             <option key={branch.id} value={branch.id}>
               {branch.name}
             </option>
@@ -474,16 +497,21 @@ export default function InspectionsPage() {
               className="rounded-xl bg-neutral-800 px-3 py-2"
             >
               <option value={0}>Выбери филиал</option>
-              {formBranches.map((branch) => (
+              {selectableBranches.map((branch) => (
                 <option key={branch.id} value={branch.id}>
                   {branch.name}
                 </option>
               ))}
             </select>
-            {formBranches.length === 0 ? (
+            {!profileLoading && selectableBranches.length === 0 ? (
               <p className="md:col-span-2 text-sm text-amber-200/90">
                 Нет доступных филиалов. Добавьте их в разделе «Филиалы» (для admin) или назначьте
                 филиал в профиле пользователя.
+              </p>
+            ) : null}
+            {branchAssignmentMissing ? (
+              <p className="md:col-span-2 text-sm text-white/60">
+                В профиле не указаны филиалы — для проверки доступен общий список из справочника.
               </p>
             ) : null}
 

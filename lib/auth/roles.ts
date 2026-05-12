@@ -47,3 +47,12 @@ export function filterAccessibleBranches(profile: Profile | null, branches: Bran
   const set = new Set(access);
   return branches.filter((branch) => branch.id != null && set.has(branch.id));
 }
+
+export function selectableBranchesForInspection(
+  profile: Profile | null,
+  branches: Branch[]
+): Branch[] {
+  const accessible = filterAccessibleBranches(profile, branches);
+  if (accessible.length > 0) return accessible;
+  return branches;
+}
