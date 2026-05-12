@@ -10,6 +10,7 @@ const links = [
   { href: "/", label: "Главная" },
   { href: "/shifts", label: "График смен" },
   { href: "/inspections", label: "Проверки" },
+  { href: "/tasks", label: "Задачи" },
   { href: "/branches", label: "Филиалы" },
   { href: "/employees", label: "Сотрудники" },
 ] as const;

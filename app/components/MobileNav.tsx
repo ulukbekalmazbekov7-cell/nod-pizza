@@ -9,6 +9,7 @@ const links = [
   { href: "/", label: "Главная" },
   { href: "/shifts", label: "Смены" },
   { href: "/inspections", label: "Проверки" },
+  { href: "/tasks", label: "Задачи" },
   { href: "/branches", label: "Филиалы" },
   { href: "/employees", label: "Сотрудники" },
 ] as const;
@@ -23,8 +24,8 @@ export default function MobileNav() {
 
   return (
     <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-white/10 bg-neutral-950/95 backdrop-blur md:hidden">
-      <div className="grid grid-cols-5 gap-1 px-2 py-2">
-        {navLinks.slice(0, 5).map(({ href, label }) => {
+      <div className="grid grid-cols-3 gap-1 px-2 py-2">
+        {navLinks.map(({ href, label }) => {
           const active =
             href === "/" ? pathname === "/" : pathname === href || pathname.startsWith(`${href}/`);
 

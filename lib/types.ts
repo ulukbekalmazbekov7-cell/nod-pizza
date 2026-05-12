@@ -111,3 +111,45 @@ export type AuditLog = {
   details: Record<string, unknown>;
   created_at: string;
 };
+
+export type ComplaintSource = "phone" | "app" | "delivery" | "hall" | "rocket" | "other";
+
+export type ComplaintRequestType = "delivery" | "hall" | "app" | "other";
+
+export type ComplaintLevel = "low" | "medium" | "high" | "critical";
+
+export type ComplaintStatus =
+  | "created"
+  | "assigned"
+  | "in_progress"
+  | "correction_check"
+  | "closed";
+
+export type JiraSyncStatus = "pending" | "success" | "failed";
+
+export type Complaint = {
+  id: string;
+  branch_id: number;
+  source: ComplaintSource;
+  request_type: ComplaintRequestType | string;
+  category: string;
+  severity: ComplaintLevel;
+  priority: ComplaintLevel;
+  complaint_text: string;
+  customer_name?: string | null;
+  customer_phone?: string | null;
+  invoice_number?: string | null;
+  table_number?: string | null;
+  floor?: string | null;
+  has_media: boolean;
+  operator_comment?: string | null;
+  status: ComplaintStatus;
+  created_by?: string | null;
+  created_at?: string;
+  updated_at?: string;
+  jira_issue_key?: string | null;
+  jira_issue_url?: string | null;
+  jira_sync_status: JiraSyncStatus;
+  jira_sync_error?: string | null;
+  branches?: { name: string } | null;
+};
