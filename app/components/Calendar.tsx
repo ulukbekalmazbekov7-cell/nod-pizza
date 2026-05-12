@@ -1,15 +1,18 @@
 "use client";
 
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import { supabase, isSupabaseConfigured } from "@/lib/supabase";
+import {
+  buildPayload,
+  DEFAULT_SHIFT_SCHEDULE_SLUG,
+  loadShiftSchedule,
+  parseStoredPayload,
+  saveShiftSchedule,
+  type ShiftScheduleAssignments,
+  type ShiftScheduleEmployee,
+} from "@/lib/shiftSchedule";
 
 type ShiftType = "Д" | "Н" | "В";
-
-type Employee = {
-  id: number;
-  name: string;
-  position: string;
-  shifts: ShiftType[];
-};
 
 const DAYS_IN_MONTH = 30;
 
@@ -35,7 +38,7 @@ const branches = [
   "АЛА АРЧА",
 ];
 
-const initialEmployees: Employee[] = [
+const initialEmployees: ShiftScheduleEmployee[] = [
   {
     id: 1,
     name: "Алмазбек уулу Улукбек",
@@ -96,7 +99,19 @@ function shuffleArray<T>(array: T[]) {
   return copy;
 }
 
-function createRandomAssignments(employees: Employee[]) {
+function normalizeAssignments(
+  employees: ShiftScheduleEmployee[],
+  incoming: ShiftScheduleAssignments
+): Record<number, string[]> {
+  const out: Record<number, string[]> = {};
+  for (const e of employees) {
+    const prev = incoming[e.id] ?? [];
+    out[e.id] = Array.from({ length: e.shifts.length }, (_, i) => prev[i] ?? "");
+  }
+  return out;
+}
+
+function createRandomAssignments(employees: ShiftScheduleEmployee[]) {
   const result: Record<number, string[]> = {};
 
   for (const employee of employees) {
@@ -139,10 +154,14 @@ function createRandomAssignments(employees: Employee[]) {
 }
 
 export default function Calendar() {
-  const [employees, setEmployees] = useState<Employee[]>(initialEmployees);
+  const [employees, setEmployees] = useState<ShiftScheduleEmployee[]>(initialEmployees);
   const [isEditing, setIsEditing] = useState(false);
   const [assignments, setAssignments] = useState<Record<number, string[]>>({});
   const [isMounted, setIsMounted] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [saveMessage, setSaveMessage] = useState<string | null>(null);
+  const [lastSavedAt, setLastSavedAt] = useState<string | null>(null);
 
   const days = useMemo(
     () =>
@@ -154,9 +173,82 @@ export default function Calendar() {
   );
 
   useEffect(() => {
-    setAssignments(createRandomAssignments(initialEmployees));
-    setIsMounted(true);
+    let cancelled = false;
+
+    async function init() {
+      setLoadError(null);
+
+      if (!isSupabaseConfigured) {
+        setAssignments(createRandomAssignments(initialEmployees));
+        if (!cancelled) setIsMounted(true);
+        return;
+      }
+
+      try {
+        const row = await loadShiftSchedule(supabase, DEFAULT_SHIFT_SCHEDULE_SLUG);
+        if (cancelled) return;
+
+        const parsed = row?.payload ? parseStoredPayload(row.payload) : null;
+
+        if (parsed && parsed.employees.length > 0) {
+          setEmployees(parsed.employees);
+          setAssignments(normalizeAssignments(parsed.employees, parsed.assignments));
+          if (row?.updated_at) {
+            setLastSavedAt(new Date(row.updated_at).toLocaleString("ru-RU"));
+          }
+        } else {
+          setAssignments(createRandomAssignments(initialEmployees));
+        }
+      } catch (e) {
+        const msg =
+          e instanceof Error ? e.message : "Не удалось загрузить график из Supabase";
+        if (!cancelled) {
+          setLoadError(msg);
+          setAssignments(createRandomAssignments(initialEmployees));
+        }
+      } finally {
+        if (!cancelled) setIsMounted(true);
+      }
+    }
+
+    void init();
+    return () => {
+      cancelled = true;
+    };
   }, []);
+
+  const handleSave = useCallback(async () => {
+    if (!isSupabaseConfigured) {
+      setSaveStatus("error");
+      setSaveMessage("Нет переменных Supabase в .env.local — сохранять некуда.");
+      return;
+    }
+
+    setSaveStatus("saving");
+    setSaveMessage(null);
+
+    try {
+      const payload = buildPayload(employees, assignments, {
+        daysInMonth: DAYS_IN_MONTH,
+        periodLabel: "2026-04",
+      });
+      const { updated_at } = await saveShiftSchedule(supabase, payload, {
+        slug: DEFAULT_SHIFT_SCHEDULE_SLUG,
+        label: "График СКП (апрель)",
+      });
+      setSaveStatus("saved");
+      setLastSavedAt(new Date(updated_at).toLocaleString("ru-RU"));
+      window.setTimeout(() => setSaveStatus("idle"), 2800);
+    } catch (e) {
+      setSaveStatus("error");
+      const raw = e instanceof Error ? e.message : "Ошибка сохранения";
+      setSaveMessage(
+        raw.includes("shift_schedule_snapshots") || raw.includes("42P01")
+          ? "Таблица не найдена. Выполни SQL из supabase/migrations/… в Supabase → SQL Editor."
+          : raw
+      );
+    }
+  }, [assignments, employees]);
 
   function handleNameChange(employeeId: number, value: string) {
     setEmployees((prev) =>
@@ -252,17 +344,43 @@ export default function Calendar() {
 
   return (
     <div className="w-full rounded-2xl border border-white/10 bg-neutral-950 p-3 md:p-4">
+      {!isSupabaseConfigured && (
+        <p className="mb-3 rounded-xl border border-amber-500/40 bg-amber-950/40 px-3 py-2 text-sm text-amber-100">
+          Облачное сохранение выключено: задай <code className="text-amber-50">.env.local</code> и
+          перезапусти dev. График пока только в памяти вкладки.
+        </p>
+      )}
+
+      {loadError && (
+        <p className="mb-3 rounded-xl border border-red-500/40 bg-red-950/40 px-3 py-2 text-sm text-red-100">
+          Загрузка из базы: {loadError}. Показан локальный черновик.
+        </p>
+      )}
+
       <div className="mb-5 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div>
           <h2 className="text-lg font-bold text-white md:text-xl">
             График работы сотрудников СКП за апрель
           </h2>
           <p className="mt-1 text-xs text-white/60 md:text-sm">
-            Нажимай на ячейки в режиме редактирования: Д → Н → В
+            Нажимай на ячейки в режиме редактирования: Д → Н → В. Сохранение — в Supabase (
+            <code className="text-white/80">{DEFAULT_SHIFT_SCHEDULE_SLUG}</code>).
           </p>
+          {lastSavedAt && (
+            <p className="mt-1 text-xs text-emerald-400/90">Последнее сохранение: {lastSavedAt}</p>
+          )}
         </div>
 
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={handleSave}
+            disabled={saveStatus === "saving"}
+            className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-500 disabled:opacity-60"
+          >
+            {saveStatus === "saving" ? "Сохранение…" : "Сохранить в базу"}
+          </button>
+
           <button
             type="button"
             onClick={() => setIsEditing((prev) => !prev)}
@@ -290,6 +408,24 @@ export default function Calendar() {
           )}
         </div>
       </div>
+
+      {saveMessage && (
+        <p
+          className={`mb-3 rounded-xl px-3 py-2 text-sm ${
+            saveStatus === "error"
+              ? "border border-red-500/40 bg-red-950/50 text-red-100"
+              : "border border-white/10 bg-neutral-900 text-white/80"
+          }`}
+        >
+          {saveMessage}
+        </p>
+      )}
+
+      {saveStatus === "saved" && !saveMessage && (
+        <p className="mb-3 rounded-xl border border-emerald-500/40 bg-emerald-950/40 px-3 py-2 text-sm text-emerald-100">
+          Сохранено в Supabase.
+        </p>
+      )}
 
       <div className="overflow-x-auto">
         <table className="w-max min-w-full border-collapse text-xs md:text-sm">

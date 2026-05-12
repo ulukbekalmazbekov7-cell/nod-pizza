@@ -2,7 +2,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { supabase } from "@/lib/supabase";
+import { formatAuthError } from "@/lib/authErrors";
+import { supabase, isSupabaseConfigured } from "@/lib/supabase";
 
 type Point = { x: number; y: number };
 
@@ -12,15 +13,15 @@ export default function LoginPage() {
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [isLogin, setIsLogin] = useState(true);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
+    const el = canvasRef.current;
+    if (!el) return;
 
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
+    const ctxMaybe = el.getContext("2d");
+    if (!ctxMaybe) return;
+    const g: CanvasRenderingContext2D = ctxMaybe;
 
     let animationId = 0;
     let width = window.innerWidth;
@@ -56,16 +57,19 @@ export default function LoginPage() {
     }));
 
     function resize() {
+      const c = canvasRef.current;
+      if (!c) return;
+
       width = window.innerWidth;
       height = window.innerHeight;
       dpr = Math.min(window.devicePixelRatio || 1, 2);
 
-      canvas.width = width * dpr;
-      canvas.height = height * dpr;
-      canvas.style.width = `${width}px`;
-      canvas.style.height = `${height}px`;
+      c.width = width * dpr;
+      c.height = height * dpr;
+      c.style.width = `${width}px`;
+      c.style.height = `${height}px`;
 
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      g.setTransform(dpr, 0, 0, dpr, 0, 0);
     }
 
     function onMove(e: MouseEvent) {
@@ -81,14 +85,14 @@ export default function LoginPage() {
     }
 
     function drawBackground() {
-      const bg = ctx.createLinearGradient(0, 0, width, height);
+      const bg = g.createLinearGradient(0, 0, width, height);
       bg.addColorStop(0, "#020617");
       bg.addColorStop(0.5, "#081226");
       bg.addColorStop(1, "#020617");
-      ctx.fillStyle = bg;
-      ctx.fillRect(0, 0, width, height);
+      g.fillStyle = bg;
+      g.fillRect(0, 0, width, height);
 
-      const glow1 = ctx.createRadialGradient(
+      const glow1 = g.createRadialGradient(
         jelly.x,
         jelly.y,
         0,
@@ -99,10 +103,10 @@ export default function LoginPage() {
       glow1.addColorStop(0, "rgba(56, 189, 248, 0.18)");
       glow1.addColorStop(0.5, "rgba(96, 165, 250, 0.10)");
       glow1.addColorStop(1, "rgba(0, 0, 0, 0)");
-      ctx.fillStyle = glow1;
-      ctx.fillRect(0, 0, width, height);
+      g.fillStyle = glow1;
+      g.fillRect(0, 0, width, height);
 
-      const glow2 = ctx.createRadialGradient(
+      const glow2 = g.createRadialGradient(
         jelly.x + 80,
         jelly.y - 40,
         0,
@@ -112,8 +116,8 @@ export default function LoginPage() {
       );
       glow2.addColorStop(0, "rgba(168, 85, 247, 0.12)");
       glow2.addColorStop(1, "rgba(0, 0, 0, 0)");
-      ctx.fillStyle = glow2;
-      ctx.fillRect(0, 0, width, height);
+      g.fillStyle = glow2;
+      g.fillRect(0, 0, width, height);
 
       for (const p of particles) {
         p.y -= p.s;
@@ -124,10 +128,10 @@ export default function LoginPage() {
           p.x = Math.random() * width;
         }
 
-        ctx.beginPath();
-        ctx.fillStyle = "rgba(148, 163, 184, 0.18)";
-        ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
-        ctx.fill();
+        g.beginPath();
+        g.fillStyle = "rgba(148, 163, 184, 0.18)";
+        g.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+        g.fill();
       }
     }
 
@@ -163,24 +167,24 @@ export default function LoginPage() {
           curr.y += (prev.y + 13 - curr.y) * 0.22;
         }
 
-        ctx.beginPath();
-        ctx.moveTo(line[0].x, line[0].y);
+        g.beginPath();
+        g.moveTo(line[0].x, line[0].y);
 
         for (let j = 1; j < line.length - 2; j++) {
           const xc = (line[j].x + line[j + 1].x) / 2;
           const yc = (line[j].y + line[j + 1].y) / 2;
-          ctx.quadraticCurveTo(line[j].x, line[j].y, xc, yc);
+          g.quadraticCurveTo(line[j].x, line[j].y, xc, yc);
         }
 
         const last = line[line.length - 1];
-        ctx.lineTo(last.x, last.y);
+        g.lineTo(last.x, last.y);
 
-        ctx.lineWidth = Math.max(1, 4 - i * 0.18);
-        ctx.strokeStyle =
+        g.lineWidth = Math.max(1, 4 - i * 0.18);
+        g.strokeStyle =
           i % 2 === 0
             ? "rgba(125, 211, 252, 0.28)"
             : "rgba(196, 181, 253, 0.24)";
-        ctx.stroke();
+        g.stroke();
       }
     }
 
@@ -188,35 +192,35 @@ export default function LoginPage() {
       const pulse = Math.sin(time * 0.003) * 4;
       const r = jelly.radius + pulse;
 
-      ctx.save();
-      ctx.translate(jelly.x, jelly.y);
+      g.save();
+      g.translate(jelly.x, jelly.y);
 
-      const head = ctx.createRadialGradient(-18, -22, 8, 0, 0, r);
+      const head = g.createRadialGradient(-18, -22, 8, 0, 0, r);
       head.addColorStop(0, "rgba(255,255,255,0.85)");
       head.addColorStop(0.15, "rgba(191,219,254,0.72)");
       head.addColorStop(0.45, "rgba(96,165,250,0.42)");
       head.addColorStop(1, "rgba(59,130,246,0.08)");
 
-      ctx.beginPath();
-      ctx.ellipse(0, 0, r * 0.92, r * 0.68, -0.18, Math.PI, 0);
-      ctx.lineTo(r * 0.78, 8);
-      ctx.quadraticCurveTo(0, r * 0.42, -r * 0.78, 8);
-      ctx.closePath();
-      ctx.fillStyle = head;
-      ctx.fill();
+      g.beginPath();
+      g.ellipse(0, 0, r * 0.92, r * 0.68, -0.18, Math.PI, 0);
+      g.lineTo(r * 0.78, 8);
+      g.quadraticCurveTo(0, r * 0.42, -r * 0.78, 8);
+      g.closePath();
+      g.fillStyle = head;
+      g.fill();
 
-      ctx.beginPath();
-      ctx.ellipse(-10, -18, r * 0.38, r * 0.18, -0.2, 0, Math.PI * 2);
-      ctx.fillStyle = "rgba(255,255,255,0.16)";
-      ctx.fill();
+      g.beginPath();
+      g.ellipse(-10, -18, r * 0.38, r * 0.18, -0.2, 0, Math.PI * 2);
+      g.fillStyle = "rgba(255,255,255,0.16)";
+      g.fill();
 
-      ctx.beginPath();
-      ctx.arc(0, 12, r * 0.55, 0, Math.PI, false);
-      ctx.strokeStyle = "rgba(191,219,254,0.16)";
-      ctx.lineWidth = 2;
-      ctx.stroke();
+      g.beginPath();
+      g.arc(0, 12, r * 0.55, 0, Math.PI, false);
+      g.strokeStyle = "rgba(191,219,254,0.16)";
+      g.lineWidth = 2;
+      g.stroke();
 
-      ctx.restore();
+      g.restore();
     }
 
     function render(time: number) {
@@ -243,28 +247,27 @@ export default function LoginPage() {
   }, []);
 
   const handleAuth = async () => {
+    if (!isSupabaseConfigured) {
+      alert(
+        "Не заданы переменные Supabase. Создай в корне проекта файл .env.local с:\n\n" +
+          "NEXT_PUBLIC_SUPABASE_URL=… (из Project Settings → API)\n" +
+          "NEXT_PUBLIC_SUPABASE_ANON_KEY=… (anon public key)\n\n" +
+          "Перезапусти npm run dev и попробуй снова."
+      );
+      return;
+    }
+
     setLoading(true);
 
     try {
-      if (isLogin) {
-        const { error } = await supabase.auth.signInWithPassword({
-          email,
-          password,
-        });
-        if (error) throw error;
-      } else {
-        const { error } = await supabase.auth.signUp({
-          email,
-          password,
-        });
-        if (error) throw error;
-      }
-
+      const { error } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
+      if (error) throw error;
       router.push("/");
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "Ошибка авторизации";
-      alert(message);
+      alert(formatAuthError(error));
     } finally {
       setLoading(false);
     }
@@ -336,7 +339,7 @@ export default function LoginPage() {
                 fontWeight: 700,
               }}
             >
-              {isLogin ? "Вход" : "Регистрация"}
+              Вход
             </h1>
             <p
               style={{
@@ -346,9 +349,32 @@ export default function LoginPage() {
                 lineHeight: 1.5,
               }}
             >
-              Войди в систему и управляй данными без шаманства и боли.
+              Корпоративный доступ: только для выданных учётных записей. Регистрация через сайт
+              отключена — пользователей добавляет администратор.
             </p>
           </div>
+
+          {!isSupabaseConfigured && (
+            <div
+              style={{
+                marginBottom: "4px",
+                padding: "12px 14px",
+                borderRadius: "14px",
+                fontSize: "14px",
+                lineHeight: 1.45,
+                color: "#fecaca",
+                background: "rgba(127, 29, 29, 0.45)",
+                border: "1px solid rgba(248, 113, 113, 0.35)",
+              }}
+            >
+              <strong>База не подключена.</strong> Добавь в корень проекта{" "}
+              <code style={{ color: "#fde68a" }}>.env.local</code> переменные{" "}
+              <code style={{ color: "#fde68a" }}>NEXT_PUBLIC_SUPABASE_URL</code> и{" "}
+              <code style={{ color: "#fde68a" }}>NEXT_PUBLIC_SUPABASE_ANON_KEY</code>{" "}
+              (Supabase → Project Settings → API), затем перезапусти dev-сервер. Поддомен в URL
+              должен совпадать с <strong>Project reference</strong> в настройках проекта.
+            </div>
+          )}
 
           <div style={{ display: "grid", gap: "14px" }}>
             <input
@@ -369,7 +395,7 @@ export default function LoginPage() {
 
             <button
               onClick={handleAuth}
-              disabled={loading}
+              disabled={loading || !isSupabaseConfigured}
               style={{
                 marginTop: "6px",
                 width: "100%",
@@ -387,27 +413,9 @@ export default function LoginPage() {
                 opacity: loading ? 0.8 : 1,
               }}
             >
-              {loading ? "Загрузка..." : isLogin ? "Войти" : "Создать аккаунт"}
+              {loading ? "Загрузка..." : "Войти"}
             </button>
           </div>
-
-          <button
-            type="button"
-            onClick={() => setIsLogin(!isLogin)}
-            style={{
-              marginTop: "18px",
-              background: "transparent",
-              border: "none",
-              padding: 0,
-              color: "#7dd3fc",
-              cursor: "pointer",
-              fontSize: "15px",
-            }}
-          >
-            {isLogin
-              ? "Нет аккаунта? Зарегистрироваться"
-              : "Уже есть аккаунт? Войти"}
-          </button>
         </div>
       </div>
     </main>

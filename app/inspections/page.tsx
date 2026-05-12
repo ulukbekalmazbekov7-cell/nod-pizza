@@ -8,20 +8,26 @@ type Branch = {
   name: string;
 };
 
-type Inspection = {
-  id?: number;
+type InspectionForm = {
   branch_id: number;
   inspector: string;
   score: number;
   comment: string;
 };
 
+type InspectionRow = InspectionForm & {
+  id?: number;
+  branches?: { name: string } | null;
+};
+
 export default function InspectionsPage() {
   const [branches, setBranches] = useState<Branch[]>([]);
-  const [inspections, setInspections] = useState<any[]>([]);
+  const [inspections, setInspections] = useState<InspectionRow[]>([]);
   const [showForm, setShowForm] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
 
-  const [form, setForm] = useState<Inspection>({
+  const [form, setForm] = useState<InspectionForm>({
     branch_id: 0,
     inspector: "",
     score: 0,
@@ -36,7 +42,7 @@ export default function InspectionsPage() {
       .order("created_at", { ascending: false });
 
     setBranches(branchesData || []);
-    setInspections(inspectionsData || []);
+    setInspections((inspectionsData || []) as InspectionRow[]);
   };
 
   useEffect(() => {
@@ -44,9 +50,41 @@ export default function InspectionsPage() {
   }, []);
 
   const handleSave = async () => {
-    if (!form.branch_id) return;
+    setSaveError(null);
 
-    await supabase.from("inspections").insert([form]);
+    if (!form.branch_id) {
+      setSaveError("Выбери филиал");
+      return;
+    }
+
+    const inspector = form.inspector.trim();
+    if (!inspector) {
+      setSaveError("Укажи проверяющего");
+      return;
+    }
+
+    if (!Number.isFinite(form.score) || form.score < 0 || form.score > 100) {
+      setSaveError("Оценка должна быть от 0 до 100");
+      return;
+    }
+
+    setSaving(true);
+
+    const { error } = await supabase.from("inspections").insert([
+      {
+        branch_id: form.branch_id,
+        inspector,
+        score: form.score,
+        comment: form.comment.trim(),
+      },
+    ]);
+
+    setSaving(false);
+
+    if (error) {
+      setSaveError(error.message || "Не удалось сохранить");
+      return;
+    }
 
     setForm({
       branch_id: 0,
@@ -65,7 +103,11 @@ export default function InspectionsPage() {
         <h1 className="text-3xl font-bold">Проверки</h1>
 
         <button
-          onClick={() => setShowForm(!showForm)}
+          type="button"
+          onClick={() => {
+            setSaveError(null);
+            setShowForm(!showForm);
+          }}
           className="bg-green-600 px-4 py-2 rounded"
         >
           + Новая проверка
@@ -74,6 +116,9 @@ export default function InspectionsPage() {
 
       {showForm && (
         <div className="bg-neutral-900 p-4 rounded-xl mb-6">
+          {saveError && (
+            <p className="mb-3 rounded-lg bg-red-900/40 px-3 py-2 text-sm text-red-200">{saveError}</p>
+          )}
           <div className="grid gap-3">
 
             <select
@@ -120,10 +165,12 @@ export default function InspectionsPage() {
             />
 
             <button
+              type="button"
               onClick={handleSave}
-              className="bg-blue-600 px-4 py-2 rounded"
+              disabled={saving}
+              className="rounded bg-blue-600 px-4 py-2 disabled:opacity-50"
             >
-              Сохранить
+              {saving ? "Сохранение…" : "Сохранить"}
             </button>
 
           </div>
