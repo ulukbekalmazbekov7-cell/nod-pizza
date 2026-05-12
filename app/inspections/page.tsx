@@ -9,8 +9,15 @@ import LoadingState from "@/app/components/LoadingState";
 import { useConfirmDialog } from "@/app/components/ConfirmDialog";
 import { useProfile } from "@/app/components/ProfileProvider";
 import { useToast } from "@/app/components/ToastProvider";
+import { filterAccessibleBranches } from "@/lib/auth/roles";
 import { writeAuditLog } from "@/lib/audit";
 import { flattenCriteria, fetchInspectionCatalog } from "@/lib/inspectionCriteria";
+import {
+  fetchBranches,
+  fetchInspectionPhotos,
+  fetchInspectionResults,
+  fetchInspectionsList,
+} from "@/lib/inspectionData";
 import {
   deleteInspectionPhoto,
   getInspectionPhotoUrl,
@@ -99,6 +106,11 @@ export default function InspectionsPage() {
 
   const allCriteria = useMemo(() => flattenCriteria(categories), [categories]);
 
+  const formBranches = useMemo(
+    () => filterAccessibleBranches(profile, branches),
+    [branches, profile]
+  );
+
   const previewScore = useMemo(() => {
     const results = Object.entries(criterionValues).map(([criterion_id, value]) => ({
       criterion_id,
@@ -111,38 +123,37 @@ export default function InspectionsPage() {
     setLoading(true);
 
     try {
-      const [{ data: branchesData }, catalog, { data: inspectionsData, error }] = await Promise.all([
-        supabase.from("branches").select("id, name").order("name"),
-        fetchInspectionCatalog(supabase),
-        supabase
-          .from("inspections")
-          .select(
-            "id, branch_id, inspector, score, comment, status, author_id, inspected_at, minor_violations, medium_violations, critical_violations, non_scoring_findings, total_penalties, created_at, branches(name)"
-          )
-          .order("created_at", { ascending: false }),
+      const [branchesData, catalog] = await Promise.all([
+        fetchBranches(supabase).catch((error) => {
+          const message = error instanceof Error ? error.message : "Не удалось загрузить филиалы";
+          pushToast(message, "error");
+          return [] as Branch[];
+        }),
+        fetchInspectionCatalog(supabase).catch((error) => {
+          const message = error instanceof Error ? error.message : "Не удалось загрузить критерии";
+          pushToast(message, "error");
+          return [] as InspectionCategory[];
+        }),
       ]);
 
-      if (error) throw error;
-
-      const rows = (inspectionsData ?? []) as InspectionRow[];
-      setBranches((branchesData ?? []) as Branch[]);
+      setBranches(branchesData);
       setCategories(catalog);
+
+      const inspectionsData = await fetchInspectionsList(supabase).catch((error) => {
+        const message = error instanceof Error ? error.message : "Не удалось загрузить проверки";
+        pushToast(message, "error");
+        return [];
+      });
+
+      const rows = inspectionsData as InspectionRow[];
       setInspections(rows);
 
       const ids = rows.map((row) => row.id).filter((id): id is number => id != null);
 
       if (ids.length > 0) {
-        const [{ data: resultsData }, { data: photosData }] = await Promise.all([
-          supabase
-            .from("inspection_results")
-            .select(
-              "id, inspection_id, criterion_id, answer, comment, criterion:inspection_criteria(id, title, severity, penalty_points, is_evaluated, subcategory:inspection_subcategories(id, name, category:inspection_categories(id, name)))"
-            )
-            .in("inspection_id", ids),
-          supabase
-            .from("inspection_photos")
-            .select("id, inspection_id, storage_path, uploaded_by, criterion_id, created_at")
-            .in("inspection_id", ids),
+        const [resultsData, photosData] = await Promise.all([
+          fetchInspectionResults(supabase, ids).catch(() => []),
+          fetchInspectionPhotos(supabase, ids).catch(() => []),
         ]);
 
         const groupedResults: Record<number, InspectionResult[]> = {};
@@ -463,12 +474,18 @@ export default function InspectionsPage() {
               className="rounded-xl bg-neutral-800 px-3 py-2"
             >
               <option value={0}>Выбери филиал</option>
-              {branches.map((branch) => (
+              {formBranches.map((branch) => (
                 <option key={branch.id} value={branch.id}>
                   {branch.name}
                 </option>
               ))}
             </select>
+            {formBranches.length === 0 ? (
+              <p className="md:col-span-2 text-sm text-amber-200/90">
+                Нет доступных филиалов. Добавьте их в разделе «Филиалы» (для admin) или назначьте
+                филиал в профиле пользователя.
+              </p>
+            ) : null}
 
             <input
               type="date"

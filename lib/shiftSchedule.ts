@@ -90,27 +90,45 @@ export function parseStoredPayload(raw: unknown): {
   return { employees, assignments };
 }
 
+const SHIFT_SCHEDULE_BASE_COLUMNS = "slug,label,payload,updated_at" as const;
+const SHIFT_SCHEDULE_EXTENDED_COLUMNS =
+  `${SHIFT_SCHEDULE_BASE_COLUMNS},updated_by,branch_id,period_label` as const;
+
+function isMissingColumnError(error: { code?: string; message?: string } | null) {
+  return error?.code === "42703" || error?.code === "PGRST204";
+}
+
 export async function loadShiftSchedule(
   client: SupabaseClient,
   slug: string = DEFAULT_SHIFT_SCHEDULE_SLUG
 ): Promise<ShiftScheduleRow | null> {
-  const { data, error } = await client
+  let { data, error } = await client
     .from("shift_schedule_snapshots")
-    .select("slug,label,payload,updated_at,updated_by,branch_id,period_label")
+    .select(SHIFT_SCHEDULE_EXTENDED_COLUMNS)
     .eq("slug", slug)
     .maybeSingle();
+
+  if (isMissingColumnError(error)) {
+    ({ data, error } = await client
+      .from("shift_schedule_snapshots")
+      .select(SHIFT_SCHEDULE_BASE_COLUMNS)
+      .eq("slug", slug)
+      .maybeSingle());
+  }
 
   if (error) throw error;
   if (!data) return null;
 
+  const row = data as Record<string, unknown>;
+
   return {
-    slug: data.slug as string,
-    label: data.label as string | null,
-    payload: data.payload as ShiftSchedulePayloadV1,
-    updated_at: data.updated_at as string,
-    updated_by: data.updated_by as string | null,
-    branch_id: data.branch_id as number | null,
-    period_label: data.period_label as string | null,
+    slug: row.slug as string,
+    label: row.label as string | null,
+    payload: row.payload as ShiftSchedulePayloadV1,
+    updated_at: row.updated_at as string,
+    updated_by: (row.updated_by as string | null) ?? null,
+    branch_id: (row.branch_id as number | null) ?? null,
+    period_label: (row.period_label as string | null) ?? null,
   };
 }
 
@@ -127,24 +145,37 @@ export async function saveShiftSchedule(
 ): Promise<{ updated_at: string }> {
   const slug = options?.slug ?? DEFAULT_SHIFT_SCHEDULE_SLUG;
   const label = options?.label ?? "График СКП";
+  const updatedAt = new Date().toISOString();
 
-  const { data, error } = await client
+  const baseRow = {
+    slug,
+    label,
+    payload,
+    updated_at: updatedAt,
+  };
+
+  const extendedRow = {
+    ...baseRow,
+    branch_id: options?.branchId ?? null,
+    period_label: options?.periodLabel ?? payload.periodLabel ?? null,
+    updated_by: options?.updatedBy ?? null,
+  };
+
+  let { data, error } = await client
     .from("shift_schedule_snapshots")
-    .upsert(
-      {
-        slug,
-        label,
-        payload,
-        branch_id: options?.branchId ?? null,
-        period_label: options?.periodLabel ?? payload.periodLabel ?? null,
-        updated_by: options?.updatedBy ?? null,
-        updated_at: new Date().toISOString(),
-      },
-      { onConflict: "slug" }
-    )
+    .upsert(extendedRow, { onConflict: "slug" })
     .select("updated_at")
     .single();
 
+  if (isMissingColumnError(error)) {
+    ({ data, error } = await client
+      .from("shift_schedule_snapshots")
+      .upsert(baseRow, { onConflict: "slug" })
+      .select("updated_at")
+      .single());
+  }
+
   if (error) throw error;
+  if (!data) throw new Error("Не удалось сохранить график в Supabase");
   return { updated_at: data.updated_at as string };
 }

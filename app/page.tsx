@@ -71,11 +71,7 @@ export default function Home() {
           .select("id, branch_id, score, created_at, inspector, status, branches(name)")
           .gte("created_at", monthStart)
           .order("created_at", { ascending: false }),
-        supabase
-          .from("shift_schedule_snapshots")
-          .select("payload, period_label")
-          .eq("period_label", periodLabel)
-          .limit(5),
+        supabase.from("shift_schedule_snapshots").select("payload").limit(20),
       ]);
 
       if (branchesError || employeesError || inspectionsError) {
@@ -109,8 +105,10 @@ export default function Home() {
         let count = 0;
         for (const row of shiftRows) {
           const payload = row.payload as {
+            periodLabel?: string;
             employees?: Array<{ shifts?: string[] }>;
           };
+          if (payload.periodLabel && payload.periodLabel !== periodLabel) continue;
           payload.employees?.forEach((employee) => {
             const shift = employee.shifts?.[dayIndex];
             if (shift === "Д" || shift === "Н") count += 1;

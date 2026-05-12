@@ -1,4 +1,4 @@
-import type { Profile, UserRole } from "@/lib/types";
+import type { Branch, Profile, UserRole } from "@/lib/types";
 
 export const ROLE_LABELS: Record<UserRole, string> = {
   admin: "Администратор",
@@ -41,12 +41,9 @@ export function accessibleBranchIds(profile: Profile | null): number[] | "all" {
   return profile.branch_ids;
 }
 
-export function filterByAccessibleBranches<T extends { branch_id?: number | null }>(
-  profile: Profile | null,
-  rows: T[]
-): T[] {
+export function filterAccessibleBranches(profile: Profile | null, branches: Branch[]): Branch[] {
   const access = accessibleBranchIds(profile);
-  if (access === "all") return rows;
+  if (access === "all") return branches;
   const set = new Set(access);
-  return rows.filter((row) => row.branch_id != null && set.has(row.branch_id));
+  return branches.filter((branch) => branch.id != null && set.has(branch.id));
 }

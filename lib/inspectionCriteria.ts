@@ -1,6 +1,10 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { InspectionCategory, InspectionCriterion, InspectionSubcategory } from "@/lib/types";
 
+function isMissingTableError(error: { code?: string } | null) {
+  return error?.code === "PGRST205";
+}
+
 export async function fetchInspectionCatalog(client: SupabaseClient) {
   const { data, error } = await client
     .from("inspection_categories")
@@ -15,7 +19,10 @@ export async function fetchInspectionCatalog(client: SupabaseClient) {
     )
     .order("sort_order", { ascending: true });
 
-  if (error) throw error;
+  if (error) {
+    if (isMissingTableError(error)) return [];
+    throw error;
+  }
 
   const categories = (data ?? []) as InspectionCategory[];
   return categories.map((category) => ({
