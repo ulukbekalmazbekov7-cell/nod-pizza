@@ -1,6 +1,6 @@
 # Security report — корпоративный режим (внутренняя система)
 
-Краткий отчёт по состоянию безопасности после перевода на внутренний доступ.
+Краткий отчёт по состоянию безопасности MVP внутреннего QC-портала.
 
 ## Что было опасно / слабее желаемого
 
@@ -9,38 +9,45 @@
 3. **Публичная регистрация в UI** — форма позволяла вызывать `signUp`; при включённой регистрации в проекте это расширяло поверхность атаки.
 4. **Таблицы без единой политики в репозитории** — риск: в Dashboard забыли включить RLS на `branches` / `employees` / `inspections` и т.д.
 5. **`NEXT_PUBLIC_*`** — anon/publishable ключ по определению виден в браузере; это нормально для Supabase, но **вся** защита данных — **RLS и Auth**, не секретность ключа.
+6. **Широкий доступ authenticated** — любой залогиненный пользователь видел все строки до введения ролей в `profiles`.
 
 ## Что исправлено в коде и артефактах
 
 | Мера | Описание |
 |------|----------|
-| **Middleware** (`middleware.ts`) | Cookie-сессия Supabase (`@supabase/ssr`), редирект неавторизованных на `/login`, залогиненных с `/login` на главную. |
-| **Браузерный клиент** (`lib/supabase.ts`) | `createBrowserClient` — сессия в cookie, согласована с middleware и RLS для `authenticated`. |
+| **Middleware** (`middleware.ts`) | Cookie-сессия Supabase (`@supabase/ssr`), редирект неавторизованных на `/login`, залогиненных с `/login` на главную; `/audit` только для `profiles.role = admin`. |
+| **Браузерный клиент** (`lib/supabase.ts`) | `createBrowserClient` — сессия в cookie, согласована с middleware и RLS для `authenticated`. **service_role не используется.** |
 | **Только вход** (`app/login/page.tsx`) | Убрана регистрация из UI; один сценарий — `signInWithPassword`. |
-| **Сообщения об ошибках** (`lib/authErrors.ts`) | Понятные тексты: неверный пароль, почта не подтверждена, регистрация отключена, сеть и т.д. |
-| **Миграция RLS** | `supabase/migrations/20260213130000_corporate_rls_auth_tables.sql` — RLS + политики **только `authenticated`** для `branches`, `employees`, `inspections`, `shift_schedule_snapshots`; условно для `profiles` и `shifts`, если таблицы есть. |
-| **Шаблон env** | `.env.example` — только публичные ключи; напоминание не класть **service_role** в клиент. |
-| **Проверка кода** | В репозитории нет использования **service_role** в TS/TSX. |
+| **Роли** (`profiles`, `lib/auth/roles.ts`, `ProfileProvider`) | admin / manager / qc; UI и запросы учитывают роль; данные режутся RLS. |
+| **Аудит** (`audit_logs`, `lib/audit.ts`, `app/audit/page.tsx`) | Журнал действий; страница только admin. |
+| **Фото инспекций** (`inspection-photos` bucket, `inspection_photos`, storage policies) | Загрузка/просмотр для authenticated; удаление admin или автором файла. |
+| **Миграции RLS** | `supabase/migrations/` — RLS и политики по ролям и филиалам. |
+| **Шаблон env** | `.env.example` — только публичные ключи. |
+| **Git** | `.env*` в `.gitignore`. |
 
 ## Что нужно сделать вручную в Supabase Dashboard
 
-Обязательно для полного «корпоративного» режима:
+1. **Authentication → Providers → Email** — включить **Confirm email**.
+2. **Authentication → Settings** — отключить **Sign ups**; пользователей создаёт администратор.
+3. Выполнить все SQL из `supabase/migrations/` в **SQL Editor**, если ещё не применяли.
+4. Для каждого пользователя Auth создать/обновить строку в `public.profiles` с ролью и привязкой к филиалам (см. README).
+5. Убедиться, что bucket **inspection-photos** существует и **не публичный**.
 
-1. **Authentication → Providers → Email**  
-   - Включить **Confirm email** (вход только после подтверждения почты).
-2. **Authentication → Settings** (или Providers / общие настройки регистрации в вашей версии UI)  
-   - Отключить **Sign ups** / публичную регистрацию (**Disable sign ups**), чтобы новые пользователи создавались только администратором (Invite / Add user / SQL).
-3. Выполнить SQL из `supabase/migrations/20260213130000_corporate_rls_auth_tables.sql` в **SQL Editor**, если ещё не применяли.
+## Проверка перед демо
 
-После отключения регистрации попытка `signUp` через API вернёт ошибку; в приложении регистрация уже не вызывается.
+- [ ] В репозитории нет `service_role` в TS/TSX.
+- [ ] `.env.local` не в git.
+- [ ] RLS включён на `branches`, `employees`, `inspections`, `profiles`, `audit_logs`, `inspection_photos`, `shift_schedule_snapshots`.
+- [ ] Тестовые пользователи admin / manager / qc с разными филиалами.
+- [ ] Middleware режет `/audit` для не-admin.
 
 ## Что желательно улучшить позже
 
-- **Роли и узкая RLS** — сейчас любой `authenticated` видит все строки; для филиалов можно политики по `auth.uid()` и таблице профилей / claims.
-- **Серверные операции** — чувствительные отчёты через Route Handlers + проверка сессии на сервере + при необходимости **service_role** только на сервере, не в браузере.
-- **Аудит и мониторинг** — логирование входов, опционально MFA в Supabase для админов.
-- **Ротация ключей** — если anon когда-либо утёк из git/скриншотов, ротация в Dashboard.
+- **MFA** для админов в Supabase.
+- **Серверные Route Handlers** для чувствительных отчётов.
+- **Подписанные URL** с коротким TTL и аудит скачиваний фото.
+- **Ротация ключей** при подозрении на утечку anon key.
 
 ## Данные графика смен
 
-Таблица `shift_schedule_snapshots` с RLS и политикой только для **`authenticated`**: анонимный клиент без сессии не читает и не пишет график; загрузка/сохранение из приложения совпадает с наличием входа и cookie-сессии.
+Таблица `shift_schedule_snapshots` с RLS по филиалу и роли; поля `updated_by`, `period_label`, `branch_id` для истории изменений.

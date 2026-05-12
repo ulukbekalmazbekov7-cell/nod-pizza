@@ -1,6 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useConfirmDialog } from "@/app/components/ConfirmDialog";
+import { useProfile } from "@/app/components/ProfileProvider";
+import { useToast } from "@/app/components/ToastProvider";
+import { canManageBranches } from "@/lib/auth/roles";
+import { writeAuditLog } from "@/lib/audit";
 import { supabase } from "@/lib/supabase";
 
 type Branch = {
@@ -19,6 +24,10 @@ const emptyBranch: Branch = {
 };
 
 export default function BranchesPage() {
+  const { profile } = useProfile();
+  const { pushToast } = useToast();
+  const { confirm, dialog } = useConfirmDialog();
+  const canEdit = canManageBranches(profile);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [newBranch, setNewBranch] = useState<Branch>(emptyBranch);
@@ -85,15 +94,25 @@ export default function BranchesPage() {
   };
 
   const handleDeleteBranch = async (id?: number) => {
-    if (!id) return;
+    if (!id || !canEdit) return;
+
+    const ok = await confirm({
+      title: "Удалить филиал?",
+      description: "Связанные данные могут остаться без привязки.",
+      confirmLabel: "Удалить",
+      danger: true,
+    });
+    if (!ok) return;
 
     const { error } = await supabase.from("branches").delete().eq("id", id);
 
     if (error) {
-      console.error("Ошибка удаления филиала:", error);
+      pushToast(error.message, "error");
       return;
     }
 
+    await writeAuditLog(supabase, "branch_deleted", "branch", id);
+    pushToast("Филиал удалён", "success");
     fetchBranches();
   };
 
@@ -116,21 +135,24 @@ export default function BranchesPage() {
 
   return (
     <main className="min-h-screen bg-neutral-950 text-white p-6">
+      {dialog}
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-3xl font-bold">Филиалы</h1>
 
-        <button
-          onClick={() => {
-            if (showForm) {
-              handleCancel();
-            } else {
-              setShowForm(true);
-            }
-          }}
-          className="bg-blue-600 hover:bg-blue-500 px-4 py-2 rounded-lg"
-        >
-          + Добавить филиал
-        </button>
+        {canEdit ? (
+          <button
+            onClick={() => {
+              if (showForm) {
+                handleCancel();
+              } else {
+                setShowForm(true);
+              }
+            }}
+            className="bg-blue-600 hover:bg-blue-500 px-4 py-2 rounded-lg"
+          >
+            + Добавить филиал
+          </button>
+        ) : null}
       </div>
 
       {showForm && (
@@ -222,21 +244,23 @@ export default function BranchesPage() {
                   <p className="mt-2">{branch.status}</p>
                 </div>
 
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => handleEditBranch(branch)}
-                    className="bg-yellow-600 hover:bg-yellow-500 px-3 py-2 rounded-lg text-sm"
-                  >
-                    Редактировать
-                  </button>
+                {canEdit ? (
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => handleEditBranch(branch)}
+                      className="bg-yellow-600 hover:bg-yellow-500 px-3 py-2 rounded-lg text-sm"
+                    >
+                      Редактировать
+                    </button>
 
-                  <button
-                    onClick={() => handleDeleteBranch(branch.id)}
-                    className="bg-red-600 hover:bg-red-500 px-3 py-2 rounded-lg text-sm"
-                  >
-                    Удалить
-                  </button>
-                </div>
+                    <button
+                      onClick={() => handleDeleteBranch(branch.id)}
+                      className="bg-red-600 hover:bg-red-500 px-3 py-2 rounded-lg text-sm"
+                    >
+                      Удалить
+                    </button>
+                  </div>
+                ) : null}
               </div>
             </div>
           ))}

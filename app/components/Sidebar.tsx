@@ -1,7 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
+import { useProfile } from "@/app/components/ProfileProvider";
+import { canAccessAudit, ROLE_LABELS } from "@/lib/auth/roles";
+import { supabase } from "@/lib/supabase";
 
 const links = [
   { href: "/", label: "Главная" },
@@ -13,6 +16,17 @@ const links = [
 
 export default function Sidebar() {
   const pathname = usePathname();
+  const router = useRouter();
+  const { profile } = useProfile();
+
+  const navLinks = canAccessAudit(profile)
+    ? [...links, { href: "/audit", label: "Журнал аудита" } as const]
+    : links;
+
+  const handleSignOut = async () => {
+    await supabase.auth.signOut();
+    router.replace("/login");
+  };
 
   return (
     <aside className="hidden min-h-screen w-64 shrink-0 flex-col border-r border-white/10 bg-neutral-900/60 p-5 md:flex">
@@ -26,7 +40,7 @@ export default function Sidebar() {
       </div>
 
       <nav className="space-y-2 text-sm">
-        {links.map(({ href, label }) => {
+        {navLinks.map(({ href, label }) => {
           const active =
             href === "/" ? pathname === "/" : pathname === href || pathname.startsWith(`${href}/`);
 
@@ -41,6 +55,22 @@ export default function Sidebar() {
           );
         })}
       </nav>
+
+      <div className="mt-auto space-y-3 border-t border-white/10 pt-5 text-sm">
+        {profile ? (
+          <div className="rounded-xl bg-white/5 px-4 py-3">
+            <p className="font-medium">{profile.full_name || "Пользователь"}</p>
+            <p className="mt-1 text-white/60">{ROLE_LABELS[profile.role]}</p>
+          </div>
+        ) : null}
+        <button
+          type="button"
+          onClick={() => void handleSignOut()}
+          className="w-full rounded-xl border border-white/10 px-4 py-2 text-left text-white/80 hover:bg-white/5"
+        >
+          Выйти
+        </button>
+      </div>
     </aside>
   );
 }

@@ -1,10 +1,12 @@
 "use client";
 
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import { useProfile } from "@/app/components/ProfileProvider";
+import { writeAuditLog } from "@/lib/audit";
 import { supabase, isSupabaseConfigured } from "@/lib/supabase";
 import {
   buildPayload,
-  DEFAULT_SHIFT_SCHEDULE_SLUG,
+  buildShiftScheduleSlug,
   loadShiftSchedule,
   parseStoredPayload,
   saveShiftSchedule,
@@ -154,6 +156,7 @@ function createRandomAssignments(employees: ShiftScheduleEmployee[]) {
 }
 
 export default function Calendar() {
+  const { session } = useProfile();
   const [employees, setEmployees] = useState<ShiftScheduleEmployee[]>(initialEmployees);
   const [isEditing, setIsEditing] = useState(false);
   const [assignments, setAssignments] = useState<Record<number, string[]>>({});
@@ -162,6 +165,15 @@ export default function Calendar() {
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [lastSavedAt, setLastSavedAt] = useState<string | null>(null);
+  const [lastSavedBy, setLastSavedBy] = useState<string | null>(null);
+  const [periodLabel, setPeriodLabel] = useState("2026-04");
+  const [branchId, setBranchId] = useState<number | null>(null);
+  const [branchOptions, setBranchOptions] = useState<Array<{ id: number; name: string }>>([]);
+
+  const scheduleSlug = useMemo(
+    () => buildShiftScheduleSlug(branchId, periodLabel),
+    [branchId, periodLabel]
+  );
 
   const days = useMemo(
     () =>
@@ -171,6 +183,20 @@ export default function Calendar() {
       })),
     []
   );
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadBranches() {
+      const { data } = await supabase.from("branches").select("id, name").order("name");
+      if (!cancelled) setBranchOptions((data ?? []) as Array<{ id: number; name: string }>);
+    }
+
+    void loadBranches();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -185,7 +211,7 @@ export default function Calendar() {
       }
 
       try {
-        const row = await loadShiftSchedule(supabase, DEFAULT_SHIFT_SCHEDULE_SLUG);
+        const row = await loadShiftSchedule(supabase, scheduleSlug);
         if (cancelled) return;
 
         const parsed = row?.payload ? parseStoredPayload(row.payload) : null;
@@ -196,8 +222,11 @@ export default function Calendar() {
           if (row?.updated_at) {
             setLastSavedAt(new Date(row.updated_at).toLocaleString("ru-RU"));
           }
+          setLastSavedBy(row?.updated_by ?? null);
         } else {
           setAssignments(createRandomAssignments(initialEmployees));
+          setLastSavedAt(null);
+          setLastSavedBy(null);
         }
       } catch (e) {
         const msg =
@@ -215,7 +244,7 @@ export default function Calendar() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [scheduleSlug]);
 
   const handleSave = useCallback(async () => {
     if (!isSupabaseConfigured) {
@@ -230,14 +259,22 @@ export default function Calendar() {
     try {
       const payload = buildPayload(employees, assignments, {
         daysInMonth: DAYS_IN_MONTH,
-        periodLabel: "2026-04",
+        periodLabel,
       });
       const { updated_at } = await saveShiftSchedule(supabase, payload, {
-        slug: DEFAULT_SHIFT_SCHEDULE_SLUG,
-        label: "График СКП (апрель)",
+        slug: scheduleSlug,
+        label: `График СКП (${periodLabel})`,
+        branchId,
+        periodLabel,
+        updatedBy: session?.user.id ?? null,
       });
       setSaveStatus("saved");
       setLastSavedAt(new Date(updated_at).toLocaleString("ru-RU"));
+      setLastSavedBy(session?.user.id ?? null);
+      await writeAuditLog(supabase, "shift_schedule_saved", "shift_schedule", scheduleSlug, {
+        branch_id: branchId,
+        period_label: periodLabel,
+      });
       window.setTimeout(() => setSaveStatus("idle"), 2800);
     } catch (e) {
       setSaveStatus("error");
@@ -248,7 +285,7 @@ export default function Calendar() {
           : raw
       );
     }
-  }, [assignments, employees]);
+  }, [assignments, branchId, employees, periodLabel, scheduleSlug, session?.user.id]);
 
   function handleNameChange(employeeId: number, value: string) {
     setEmployees((prev) =>
@@ -364,14 +401,37 @@ export default function Calendar() {
           </h2>
           <p className="mt-1 text-xs text-white/60 md:text-sm">
             Нажимай на ячейки в режиме редактирования: Д → Н → В. Сохранение — в Supabase (
-            <code className="text-white/80">{DEFAULT_SHIFT_SCHEDULE_SLUG}</code>).
+            <code className="text-white/80">{scheduleSlug}</code>).
           </p>
-          {lastSavedAt && (
-            <p className="mt-1 text-xs text-emerald-400/90">Последнее сохранение: {lastSavedAt}</p>
-          )}
+          {lastSavedAt ? (
+            <p className="mt-1 text-xs text-emerald-400/90">
+              Последнее сохранение: {lastSavedAt}
+              {lastSavedBy ? ` · пользователь ${lastSavedBy}` : ""}
+            </p>
+          ) : null}
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
+          <input
+            type="month"
+            value={periodLabel}
+            onChange={(event) => setPeriodLabel(event.target.value)}
+            className="rounded-xl border border-white/10 bg-neutral-900 px-3 py-2 text-sm"
+          />
+          <select
+            value={branchId ?? ""}
+            onChange={(event) =>
+              setBranchId(event.target.value ? Number(event.target.value) : null)
+            }
+            className="rounded-xl border border-white/10 bg-neutral-900 px-3 py-2 text-sm"
+          >
+            <option value="">Все филиалы</option>
+            {branchOptions.map((branch) => (
+              <option key={branch.id} value={branch.id}>
+                {branch.name}
+              </option>
+            ))}
+          </select>
           <button
             type="button"
             onClick={handleSave}

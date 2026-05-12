@@ -31,7 +31,14 @@ export type ShiftScheduleRow = {
   label: string | null;
   payload: ShiftSchedulePayloadV1;
   updated_at: string;
+  updated_by?: string | null;
+  branch_id?: number | null;
+  period_label?: string | null;
 };
+
+export function buildShiftScheduleSlug(branchId: number | null, periodLabel: string) {
+  return `shift_${branchId ?? "all"}_${periodLabel}`;
+}
 
 function assignmentsFromRecord(
   raw: Record<string, string[]> | undefined
@@ -89,7 +96,7 @@ export async function loadShiftSchedule(
 ): Promise<ShiftScheduleRow | null> {
   const { data, error } = await client
     .from("shift_schedule_snapshots")
-    .select("slug,label,payload,updated_at")
+    .select("slug,label,payload,updated_at,updated_by,branch_id,period_label")
     .eq("slug", slug)
     .maybeSingle();
 
@@ -101,13 +108,22 @@ export async function loadShiftSchedule(
     label: data.label as string | null,
     payload: data.payload as ShiftSchedulePayloadV1,
     updated_at: data.updated_at as string,
+    updated_by: data.updated_by as string | null,
+    branch_id: data.branch_id as number | null,
+    period_label: data.period_label as string | null,
   };
 }
 
 export async function saveShiftSchedule(
   client: SupabaseClient,
   payload: ShiftSchedulePayloadV1,
-  options?: { slug?: string; label?: string }
+  options?: {
+    slug?: string;
+    label?: string;
+    branchId?: number | null;
+    periodLabel?: string;
+    updatedBy?: string | null;
+  }
 ): Promise<{ updated_at: string }> {
   const slug = options?.slug ?? DEFAULT_SHIFT_SCHEDULE_SLUG;
   const label = options?.label ?? "График СКП";
@@ -119,6 +135,9 @@ export async function saveShiftSchedule(
         slug,
         label,
         payload,
+        branch_id: options?.branchId ?? null,
+        period_label: options?.periodLabel ?? payload.periodLabel ?? null,
+        updated_by: options?.updatedBy ?? null,
         updated_at: new Date().toISOString(),
       },
       { onConflict: "slug" }

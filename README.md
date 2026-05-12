@@ -1,36 +1,85 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# NOD PIZZA — внутренний QC-портал
 
-## Getting Started
+Закрытая корпоративная система для контроля качества, графиков смен, филиалов, сотрудников и инспекций.
 
-First, run the development server:
+## Локальный запуск
+
+1. Установи зависимости:
+
+```bash
+npm install
+```
+
+2. Скопируй `.env.example` в `.env.local` и заполни:
+
+- `NEXT_PUBLIC_SUPABASE_URL`
+- `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+
+3. В Supabase выполни SQL-миграции из `supabase/migrations/` **в порядке имени файла**.
+
+4. Запусти dev-сервер:
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+5. Открой [http://localhost:3000](http://localhost:3000) и войди под выданной учётной записью.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Миграции
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+| Файл | Назначение |
+|------|------------|
+| `20260212120000_shift_schedule_snapshots.sql` | Таблица снимков графика смен |
+| `20260213130000_corporate_rls_auth_tables.sql` | Базовый RLS для authenticated |
+| `20260512120000_roles_profiles_audit_photos.sql` | Роли, профили, аудит, фото, узкие политики |
+| `20260513140000_inspection_criteria_model.sql` | Категории, критерии, результаты, RLS |
+| `20260513150000_inspection_subcategories_hierarchy.sql` | Подгруппы, penalty_points, RLS |
+| `20260513150100_inspection_hierarchy_seed.sql` | Seed иерархии критериев |
 
-## Learn More
+## Ручная настройка Supabase Dashboard
 
-To learn more about Next.js, take a look at the following resources:
+1. **Authentication → Providers → Email** — включи подтверждение почты.
+2. **Authentication → Settings** — отключи публичную регистрацию (Sign ups).
+3. **Storage** — bucket `inspection-photos` создаётся миграцией; проверь, что он приватный.
+4. Создай пользователя: **Authentication → Users → Add user** (или Invite).
+5. После создания пользователя выполни в SQL Editor:
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+```sql
+insert into public.profiles (id, role, full_name, branch_id, branch_ids)
+values (
+  'UUID_ПОЛЬЗОВАТЕЛЯ',
+  'admin', -- admin | manager | qc
+  'Имя Фамилия',
+  null,    -- для manager: id филиала
+  '{}'     -- для qc: массив id филиалов, например '{1,2,3}'
+)
+on conflict (id) do update
+set role = excluded.role,
+    full_name = excluded.full_name,
+    branch_id = excluded.branch_id,
+    branch_ids = excluded.branch_ids;
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Роли
 
-## Deploy on Vercel
+- **admin** — полный доступ, журнал аудита.
+- **manager** — свой филиал (`profiles.branch_id`).
+- **qc** — проверки и графики по `profiles.branch_ids`.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Демо для руководства
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+1. Вход под admin: дашборд с метриками и быстрыми действиями.
+2. Раздел **Проверки**: фильтры, статус, оценка, комментарий, фото нарушений.
+3. **График смен**: выбор месяца и филиала, сохранение, история последнего сохранения.
+4. **Филиалы / Сотрудники**: справочники (редактирование у admin).
+5. **Журнал аудита** (только admin): создание/удаление проверок, изменения графика.
+6. Мобильная навигация внизу экрана; на desktop — боковое меню.
+
+## Сборка
+
+```bash
+npm run build
+npm run start
+```
+
+Подробности по безопасности — в [SECURITY.md](./SECURITY.md).

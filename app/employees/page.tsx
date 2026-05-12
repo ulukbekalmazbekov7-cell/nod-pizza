@@ -1,6 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useConfirmDialog } from "@/app/components/ConfirmDialog";
+import { useProfile } from "@/app/components/ProfileProvider";
+import { useToast } from "@/app/components/ToastProvider";
+import { canManageEmployees } from "@/lib/auth/roles";
+import { writeAuditLog } from "@/lib/audit";
 import { supabase } from "@/lib/supabase";
 
 type Branch = {
@@ -24,6 +29,10 @@ const emptyEmployee: Employee = {
 };
 
 export default function EmployeesPage() {
+  const { profile } = useProfile();
+  const { pushToast } = useToast();
+  const { confirm, dialog } = useConfirmDialog();
+  const canEdit = canManageEmployees(profile);
   const [employees, setEmployees] = useState<any[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [showForm, setShowForm] = useState(false);
@@ -79,29 +88,41 @@ export default function EmployeesPage() {
   };
 
   const handleDelete = async (id?: number) => {
-    if (!id) return;
+    if (!id || !canEdit) return;
+
+    const ok = await confirm({
+      title: "Удалить сотрудника?",
+      confirmLabel: "Удалить",
+      danger: true,
+    });
+    if (!ok) return;
 
     const { error } = await supabase.from("employees").delete().eq("id", id);
 
     if (error) {
-      console.error("Ошибка удаления сотрудника:", error);
+      pushToast(error.message, "error");
       return;
     }
 
+    await writeAuditLog(supabase, "employee_deleted", "employee", id);
+    pushToast("Сотрудник удалён", "success");
     fetchData();
   };
 
   return (
     <main className="min-h-screen bg-neutral-950 text-white p-6">
+      {dialog}
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-3xl font-bold">Сотрудники</h1>
 
-        <button
-          onClick={() => setShowForm(!showForm)}
-          className="bg-blue-600 hover:bg-blue-500 px-4 py-2 rounded-lg"
-        >
-          + Добавить сотрудника
-        </button>
+        {canEdit ? (
+          <button
+            onClick={() => setShowForm(!showForm)}
+            className="bg-blue-600 hover:bg-blue-500 px-4 py-2 rounded-lg"
+          >
+            + Добавить сотрудника
+          </button>
+        ) : null}
       </div>
 
       {showForm && (
@@ -186,12 +207,14 @@ export default function EmployeesPage() {
                 <p className="mt-2">{employee.status}</p>
               </div>
 
-              <button
-                onClick={() => handleDelete(employee.id)}
-                className="bg-red-600 hover:bg-red-500 px-3 py-2 rounded-lg text-sm"
-              >
-                Удалить
-              </button>
+              {canEdit ? (
+                <button
+                  onClick={() => handleDelete(employee.id)}
+                  className="bg-red-600 hover:bg-red-500 px-3 py-2 rounded-lg text-sm"
+                >
+                  Удалить
+                </button>
+              ) : null}
             </div>
           </div>
         ))}
