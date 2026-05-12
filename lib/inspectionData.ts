@@ -2,10 +2,10 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Branch } from "@/lib/types";
 
 const INSPECTIONS_EXTENDED_SELECT =
-  "id, branch_id, inspector, score, comment, status, author_id, inspected_at, minor_violations, medium_violations, critical_violations, non_scoring_findings, total_penalties, created_at, branches(name)";
+  "id, branch_id, inspector, score, comment, status, author_id, inspected_at, minor_violations, medium_violations, critical_violations, non_scoring_findings, total_penalties, complaint_id, created_at, branches(name)";
 
 const INSPECTIONS_BASE_SELECT =
-  "id, branch_id, inspector, score, comment, status, author_id, created_at, branches(name)";
+  "id, branch_id, inspector, score, comment, status, author_id, complaint_id, created_at, branches(name)";
 
 function isMissingColumnError(error: { code?: string } | null) {
   return error?.code === "42703" || error?.code === "PGRST204";

@@ -3,26 +3,37 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useProfile } from "@/app/components/ProfileProvider";
-import { canAccessAudit, ROLE_LABELS } from "@/lib/auth/roles";
+import { canAccessAudit, canAccessInspections, canAccessTasksDashboard, ROLE_LABELS } from "@/lib/auth/roles";
 import { supabase } from "@/lib/supabase";
 
 const links = [
   { href: "/", label: "Главная" },
   { href: "/shifts", label: "График смен" },
+  { href: "/applications", label: "Заявки" },
   { href: "/inspections", label: "Проверки" },
   { href: "/tasks", label: "Задачи" },
   { href: "/branches", label: "Филиалы" },
   { href: "/employees", label: "Сотрудники" },
-] as const;
+];
 
 export default function Sidebar() {
   const pathname = usePathname();
   const router = useRouter();
   const { profile } = useProfile();
 
-  const navLinks = canAccessAudit(profile)
-    ? [...links, { href: "/audit", label: "Журнал аудита" } as const]
-    : links;
+  const navLinks = (() => {
+    let items = [...links];
+    if (!canAccessInspections(profile)) {
+      items = items.filter((item) => item.href !== "/inspections");
+    }
+    if (!canAccessTasksDashboard(profile)) {
+      items = items.filter((item) => item.href !== "/tasks");
+    }
+    if (canAccessAudit(profile)) {
+      items = [...items, { href: "/audit", label: "Журнал аудита" }];
+    }
+    return items;
+  })();
 
   const handleSignOut = async () => {
     await supabase.auth.signOut();

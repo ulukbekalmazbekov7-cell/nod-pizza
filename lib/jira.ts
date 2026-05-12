@@ -62,7 +62,7 @@ export function readJiraConfig(): JiraConfig | null {
 
 export function buildJiraSummary(complaint: Complaint, branchName: string) {
   const reference = complaint.invoice_number?.trim() || complaint.customer_phone?.trim() || "без номера";
-  return `[Жалоба] ${branchName} — ${reference}`;
+  return `[Заявка] ${branchName} — ${reference}`;
 }
 
 export function buildJiraDescription(input: {

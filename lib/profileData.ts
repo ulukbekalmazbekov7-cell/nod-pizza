@@ -10,7 +10,7 @@ function isMissingColumnError(error: { code?: string; message?: string } | null)
 }
 
 function normalizeRole(value: unknown): UserRole {
-  if (value === "admin" || value === "manager" || value === "qc") return value;
+  if (value === "admin" || value === "manager" || value === "qc" || value === "operator") return value;
   return "qc";
 }
 

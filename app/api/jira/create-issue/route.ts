@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { COMPLAINT_BASE_SELECT } from "@/lib/complaintsData";
 import { createJiraIssueForComplaint, readJiraConfig } from "@/lib/jira";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import type { Complaint } from "@/lib/types";
@@ -7,8 +8,36 @@ type CreateIssueBody = {
   complaintId?: string;
 };
 
-const COMPLAINT_SELECT =
-  "id, branch_id, source, request_type, category, severity, priority, complaint_text, customer_name, customer_phone, invoice_number, table_number, floor, has_media, operator_comment, status, created_by, created_at, updated_at, jira_issue_key, jira_issue_url, jira_sync_status, jira_sync_error, branches(name)";
+const COMPLAINT_READ_SELECT = `${COMPLAINT_BASE_SELECT}, branches(name)`;
+
+function mergeComplaint(
+  complaint: Complaint,
+  patch: Partial<Complaint>
+): Complaint {
+  return { ...complaint, ...patch };
+}
+
+async function updateComplaintSync(
+  supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>,
+  complaint: Complaint,
+  patch: Partial<Complaint>
+) {
+  const { data, error } = await supabase
+    .from("complaints")
+    .update(patch)
+    .eq("id", complaint.id)
+    .select(COMPLAINT_BASE_SELECT)
+    .maybeSingle();
+
+  if (error) {
+    return { error: error.message, complaint: mergeComplaint(complaint, patch) };
+  }
+
+  return {
+    error: null,
+    complaint: (data as Complaint | null) ?? mergeComplaint(complaint, patch),
+  };
+}
 
 export async function POST(request: Request) {
   let body: CreateIssueBody;
@@ -35,7 +64,7 @@ export async function POST(request: Request) {
 
   const { data: complaintRow, error: complaintError } = await supabase
     .from("complaints")
-    .select(COMPLAINT_SELECT)
+    .select(COMPLAINT_READ_SELECT)
     .eq("id", body.complaintId)
     .maybeSingle();
 
@@ -65,22 +94,17 @@ export async function POST(request: Request) {
   const jiraConfig = readJiraConfig();
   if (!jiraConfig) {
     const message = "Jira env variables are not configured";
-    const { data: failedRow, error: updateError } = await supabase
-      .from("complaints")
-      .update({
-        jira_sync_status: "failed",
-        jira_sync_error: message,
-      })
-      .eq("id", complaint.id)
-      .select(COMPLAINT_SELECT)
-      .single();
+    const result = await updateComplaintSync(supabase, complaint, {
+      jira_sync_status: "failed",
+      jira_sync_error: message,
+    });
 
-    if (updateError) {
-      return NextResponse.json({ error: updateError.message }, { status: 500 });
+    if (result.error) {
+      return NextResponse.json({ error: result.error }, { status: 500 });
     }
 
     return NextResponse.json({
-      complaint: failedRow,
+      complaint: result.complaint,
       jira_sync_status: "failed",
       jira_sync_error: message,
     });
@@ -94,48 +118,37 @@ export async function POST(request: Request) {
       config: jiraConfig,
     });
 
-    const { data: updatedRow, error: updateError } = await supabase
-      .from("complaints")
-      .update({
-        jira_issue_key: jiraIssue.issueKey,
-        jira_issue_url: jiraIssue.issueUrl,
-        jira_sync_status: "success",
-        jira_sync_error: null,
-        status: complaint.status === "created" ? "assigned" : complaint.status,
-      })
-      .eq("id", complaint.id)
-      .select(COMPLAINT_SELECT)
-      .single();
+    const result = await updateComplaintSync(supabase, complaint, {
+      jira_issue_key: jiraIssue.issueKey,
+      jira_issue_url: jiraIssue.issueUrl,
+      jira_sync_status: "success",
+      jira_sync_error: null,
+      status: complaint.status === "created" ? "assigned" : complaint.status,
+    });
 
-    if (updateError) {
-      return NextResponse.json({ error: updateError.message }, { status: 500 });
+    if (result.error) {
+      return NextResponse.json({ error: result.error }, { status: 500 });
     }
 
     return NextResponse.json({
-      complaint: updatedRow,
+      complaint: result.complaint,
       jira_issue_key: jiraIssue.issueKey,
       jira_issue_url: jiraIssue.issueUrl,
       jira_sync_status: "success",
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Jira sync failed";
+    const result = await updateComplaintSync(supabase, complaint, {
+      jira_sync_status: "failed",
+      jira_sync_error: message,
+    });
 
-    const { data: failedRow, error: updateError } = await supabase
-      .from("complaints")
-      .update({
-        jira_sync_status: "failed",
-        jira_sync_error: message,
-      })
-      .eq("id", complaint.id)
-      .select(COMPLAINT_SELECT)
-      .single();
-
-    if (updateError) {
-      return NextResponse.json({ error: updateError.message }, { status: 500 });
+    if (result.error) {
+      return NextResponse.json({ error: result.error }, { status: 500 });
     }
 
     return NextResponse.json({
-      complaint: failedRow,
+      complaint: result.complaint,
       jira_sync_status: "failed",
       jira_sync_error: message,
     });

@@ -3,24 +3,34 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useProfile } from "@/app/components/ProfileProvider";
-import { canAccessAudit } from "@/lib/auth/roles";
+import { canAccessAudit, canAccessInspections, canAccessTasksDashboard } from "@/lib/auth/roles";
 
 const links = [
   { href: "/", label: "Главная" },
-  { href: "/shifts", label: "Смены" },
+  { href: "/applications", label: "Заявки" },
   { href: "/inspections", label: "Проверки" },
   { href: "/tasks", label: "Задачи" },
+  { href: "/shifts", label: "Смены" },
   { href: "/branches", label: "Филиалы" },
-  { href: "/employees", label: "Сотрудники" },
-] as const;
+];
 
 export default function MobileNav() {
   const pathname = usePathname();
   const { profile } = useProfile();
 
-  const navLinks = canAccessAudit(profile)
-    ? [...links, { href: "/audit", label: "Аудит" } as const]
-    : links;
+  const navLinks = (() => {
+    let items = [...links];
+    if (!canAccessInspections(profile)) {
+      items = items.filter((item) => item.href !== "/inspections");
+    }
+    if (!canAccessTasksDashboard(profile)) {
+      items = items.filter((item) => item.href !== "/tasks");
+    }
+    if (canAccessAudit(profile)) {
+      items = [...items, { href: "/audit", label: "Аудит" }];
+    }
+    return items;
+  })();
 
   return (
     <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-white/10 bg-neutral-950/95 backdrop-blur md:hidden">

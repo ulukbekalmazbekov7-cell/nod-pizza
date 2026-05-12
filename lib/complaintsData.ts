@@ -6,9 +6,14 @@ import type {
   ComplaintSource,
 } from "@/lib/types";
 import { complaintRequestTypeLabel, sourceForRequestType } from "@/lib/complaints";
+import { getErrorMessage } from "@/lib/errors";
 
-const COMPLAINT_SELECT =
-  "id, branch_id, source, request_type, category, severity, priority, complaint_text, customer_name, customer_phone, invoice_number, table_number, floor, has_media, operator_comment, status, created_by, created_at, updated_at, jira_issue_key, jira_issue_url, jira_sync_status, jira_sync_error, branches(name)";
+const COMPLAINT_BASE_SELECT =
+  "id, branch_id, source, request_type, category, severity, priority, complaint_text, customer_name, customer_phone, invoice_number, table_number, floor, has_media, operator_comment, status, created_by, created_at, updated_at, jira_issue_key, jira_issue_url, jira_sync_status, jira_sync_error, inspection_id";
+
+export { COMPLAINT_BASE_SELECT };
+
+const COMPLAINT_SELECT = `${COMPLAINT_BASE_SELECT}, branches(name), linked_inspection:inspections!inspection_id(id, status)`;
 
 function isMissingTableError(error: { code?: string } | null) {
   return error?.code === "PGRST205";
@@ -30,17 +35,30 @@ export type CreateComplaintInput = {
 };
 
 export async function fetchComplaints(client: SupabaseClient) {
-  const { data, error } = await client
+  const extended = await client
     .from("complaints")
     .select(COMPLAINT_SELECT)
     .order("created_at", { ascending: false });
 
-  if (error) {
-    if (isMissingTableError(error)) return [];
-    throw error;
+  if (!extended.error) {
+    return (extended.data ?? []) as unknown as Complaint[];
   }
 
-  return (data ?? []) as unknown as Complaint[];
+  if (!isMissingTableError(extended.error)) {
+    const base = await client
+      .from("complaints")
+      .select(COMPLAINT_BASE_SELECT)
+      .order("created_at", { ascending: false });
+
+    if (base.error) {
+      throw new Error(getErrorMessage(base.error, "Не удалось загрузить задачи"));
+    }
+
+    return (base.data ?? []) as unknown as Complaint[];
+  }
+
+  if (isMissingTableError(extended.error)) return [];
+  throw new Error(getErrorMessage(extended.error, "Не удалось загрузить задачи"));
 }
 
 export async function createComplaint(client: SupabaseClient, input: CreateComplaintInput) {
@@ -68,9 +86,12 @@ export async function createComplaint(client: SupabaseClient, input: CreateCompl
       created_by: input.created_by ?? null,
       jira_sync_status: "pending",
     })
-    .select(COMPLAINT_SELECT)
+    .select(COMPLAINT_BASE_SELECT)
     .single();
 
-  if (error) throw error;
+  if (error) {
+    throw new Error(getErrorMessage(error, "Не удалось создать задачу"));
+  }
+
   return data as unknown as Complaint;
 }

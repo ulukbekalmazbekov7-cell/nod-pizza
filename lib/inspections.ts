@@ -3,13 +3,13 @@ import type { InspectionStatus } from "@/lib/types";
 export function inspectionStatusLabel(status: InspectionStatus | string): string {
   switch (status) {
     case "draft":
-      return "Черновик";
+      return "Новая";
     case "in_progress":
       return "В работе";
     case "completed":
-      return "Завершена";
+      return "Закрыта";
     case "needs_review":
-      return "Требует внимания";
+      return "Проверка исправления";
     default:
       return status;
   }

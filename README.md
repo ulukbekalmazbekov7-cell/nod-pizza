@@ -39,6 +39,9 @@ npm run dev
 | `20260513150100_inspection_hierarchy_seed.sql` | Seed иерархии критериев |
 | `20260513200000_inspection_catalog_qc_write.sql` | Права qc на справочник критериев |
 | `20260513210000_complaints_jira.sql` | Жалобы операторов и поля синхронизации Jira |
+| `20260513220000_complaints_operator_access.sql` | Создание жалоб любым authenticated и просмотр своих записей |
+| `20260513230000_complaints_insert_authenticated.sql` | INSERT в complaints без проверки через RLS branches |
+| `20260513240000_complaints_creator_update.sql` | UPDATE своих жалоб, в т.ч. поля Jira после sync |
 
 ## Переменные окружения
 

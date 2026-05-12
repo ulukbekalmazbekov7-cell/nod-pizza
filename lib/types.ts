@@ -1,4 +1,4 @@
-export type UserRole = "admin" | "manager" | "qc";
+export type UserRole = "admin" | "manager" | "qc" | "operator";
 
 export type InspectionStatus = "draft" | "in_progress" | "completed" | "needs_review";
 
@@ -88,6 +88,7 @@ export type Inspection = {
   critical_violations?: number;
   non_scoring_findings?: number;
   total_penalties?: number;
+  complaint_id?: string | null;
   created_at?: string;
   branches?: { name: string } | { name: string }[] | null;
   results?: InspectionResult[];
@@ -151,5 +152,7 @@ export type Complaint = {
   jira_issue_url?: string | null;
   jira_sync_status: JiraSyncStatus;
   jira_sync_error?: string | null;
+  inspection_id?: number | null;
   branches?: { name: string } | null;
+  linked_inspection?: { id: number; status: InspectionStatus } | { id: number; status: InspectionStatus }[] | null;
 };

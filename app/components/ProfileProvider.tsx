@@ -76,7 +76,7 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
     if (!row) {
       setProfile({
         id: userId,
-        role: "qc",
+        role: "operator",
         full_name: sessionUserDisplayName(sessionUser),
         branch_id: null,
         branch_ids: [],
