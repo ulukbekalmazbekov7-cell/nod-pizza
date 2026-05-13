@@ -41,6 +41,28 @@ export async function fetchInspectionsList(client: SupabaseClient) {
   return base.data ?? [];
 }
 
+export async function fetchInspectionById(client: SupabaseClient, inspectionId: number) {
+  const extended = await client
+    .from("inspections")
+    .select(INSPECTIONS_EXTENDED_SELECT)
+    .eq("id", inspectionId)
+    .maybeSingle();
+
+  if (!isMissingColumnError(extended.error)) {
+    if (extended.error) throw extended.error;
+    return extended.data ?? null;
+  }
+
+  const base = await client
+    .from("inspections")
+    .select(INSPECTIONS_BASE_SELECT)
+    .eq("id", inspectionId)
+    .maybeSingle();
+
+  if (base.error) throw base.error;
+  return base.data ?? null;
+}
+
 export async function fetchInspectionResults(client: SupabaseClient, inspectionIds: number[]) {
   if (inspectionIds.length === 0) return [];
 

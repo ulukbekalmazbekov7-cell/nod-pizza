@@ -1,30 +1,22 @@
 "use client";
 
-import { useSearchParams } from "next/navigation";
+import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import InspectionCriteriaForm, {
-  type CriterionFormValue,
-  type NewCriterionDraft,
-} from "@/app/components/inspections/InspectionCriteriaForm";
 import EmptyState from "@/app/components/EmptyState";
 import LoadingState from "@/app/components/LoadingState";
 import { useConfirmDialog } from "@/app/components/ConfirmDialog";
 import { useProfile } from "@/app/components/ProfileProvider";
 import { useToast } from "@/app/components/ToastProvider";
-import { filterAccessibleBranches, canAccessInspections, canManageInspectionCatalog, canPerformQcInspection, selectableBranchesForInspection } from "@/lib/auth/roles";
+import {
+  canAccessInspections,
+  canPerformQcInspection,
+  selectableBranchesForInspection,
+} from "@/lib/auth/roles";
 import { writeAuditLog } from "@/lib/audit";
-import { mapInspectionStatusToComplaintStatus } from "@/lib/complaintInspections";
-import { INSPECTION_FOCUS_QUERY } from "@/lib/complaintLinks";
-import {
-  appendCriterionToCategories,
-  createInspectionCriterion,
-  flattenCriteria,
-  fetchInspectionCatalog,
-} from "@/lib/inspectionCriteria";
-import {
-  buildInspectorOptions,
-  fetchInspectorProfiles,
-} from "@/lib/peopleData";
+import { resolveLinkedInspection } from "@/lib/complaintWorkflow";
+import { fetchComplaints } from "@/lib/complaintsData";
+import { getErrorMessage } from "@/lib/errors";
+import { buildInspectionNewHref, buildInspectionPageHref } from "@/lib/inspectionPaths";
 import {
   fetchBranches,
   fetchInspectionPhotos,
@@ -34,11 +26,8 @@ import {
 import {
   deleteInspectionPhoto,
   getInspectionPhotoUrl,
-  uploadInspectionPhoto,
 } from "@/lib/inspectionPhotos";
 import {
-  BASE_INSPECTION_SCORE,
-  calculateInspectionScore,
   severityBadgeClass,
   severityLabel,
 } from "@/lib/inspectionScoring";
@@ -51,8 +40,8 @@ import {
 import { supabase } from "@/lib/supabase";
 import type {
   Branch,
+  Complaint,
   Inspection,
-  InspectionCategory,
   InspectionPhoto,
   InspectionResult,
   InspectionStatus,
@@ -62,85 +51,32 @@ type InspectionRow = Inspection & {
   branches?: { name: string } | null;
 };
 
-type InspectionForm = {
-  branch_id: number;
-  inspector: string;
-  inspected_at: string;
-  comment: string;
-  status: InspectionStatus;
-};
-
 const statusOptions: InspectionStatus[] = ["draft", "in_progress", "completed", "needs_review"];
 
-function todayInputValue() {
-  return new Date().toISOString().slice(0, 10);
-}
-
-function buildDefaultCriterionValues(categories: InspectionCategory[]) {
-  const values: Record<string, CriterionFormValue> = {};
-  for (const criterion of flattenCriteria(categories)) {
-    values[criterion.id] = { answer: "no", comment: "" };
-  }
-  return values;
-}
-
 export default function InspectionsPage() {
-  const { profile, session, loading: profileLoading } = useProfile();
+  const { profile, session } = useProfile();
   const { pushToast } = useToast();
   const { confirm, dialog } = useConfirmDialog();
 
-  const searchParams = useSearchParams();
-  const [pendingFocusId, setPendingFocusId] = useState<number | null>(null);
-
   const [branches, setBranches] = useState<Branch[]>([]);
-  const [categories, setCategories] = useState<InspectionCategory[]>([]);
+  const [complaints, setComplaints] = useState<Complaint[]>([]);
   const [inspections, setInspections] = useState<InspectionRow[]>([]);
   const [resultsByInspection, setResultsByInspection] = useState<Record<number, InspectionResult[]>>(
     {}
   );
-  const [photosByInspection, setPhotosByInspection] = useState<Record<number, InspectionPhoto[]>>(
-    {}
-  );
+  const [photosByInspection, setPhotosByInspection] = useState<Record<number, InspectionPhoto[]>>({});
   const [photoUrls, setPhotoUrls] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
-  const [showForm, setShowForm] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [saveError, setSaveError] = useState<string | null>(null);
   const [filterBranchId, setFilterBranchId] = useState<number | "all">("all");
   const [filterStatus, setFilterStatus] = useState<InspectionStatus | "all">("all");
   const [filterDateFrom, setFilterDateFrom] = useState("");
   const [filterDateTo, setFilterDateTo] = useState("");
-  const [inspectorOptions, setInspectorOptions] = useState<string[]>([]);
-  const [editingInspectionId, setEditingInspectionId] = useState<number | null>(null);
-  const [linkedComplaintId, setLinkedComplaintId] = useState<string | null>(null);
-
-  const [form, setForm] = useState<InspectionForm>({
-    branch_id: 0,
-    inspector: "",
-    inspected_at: todayInputValue(),
-    comment: "",
-    status: "completed",
-  });
-  const [criterionValues, setCriterionValues] = useState<Record<string, CriterionFormValue>>({});
-
-  const allCriteria = useMemo(() => flattenCriteria(categories), [categories]);
-
-  const assignedBranches = useMemo(
-    () => filterAccessibleBranches(profile, branches),
-    [branches, profile]
-  );
 
   const selectableBranches = useMemo(
     () => selectableBranchesForInspection(profile, branches),
     [branches, profile]
   );
 
-  const branchAssignmentMissing = useMemo(() => {
-    if (!profile || profile.role === "admin") return false;
-    return assignedBranches.length === 0 && branches.length > 0;
-  }, [assignedBranches.length, branches.length, profile]);
-
-  const canManageCatalog = canManageInspectionCatalog(profile);
   const canRunInspection = canPerformQcInspection(profile);
 
   const incomingInspections = useMemo(
@@ -151,51 +87,36 @@ export default function InspectionsPage() {
     [inspections]
   );
 
-  const previewScore = useMemo(() => {
-    const results = Object.entries(criterionValues).map(([criterion_id, value]) => ({
-      criterion_id,
-      answer: value.answer,
-    }));
-    return calculateInspectionScore(allCriteria, results);
-  }, [allCriteria, criterionValues]);
+  const pendingComplaints = useMemo(
+    () =>
+      complaints.filter(
+        (complaint) =>
+          !resolveLinkedInspection(complaint) &&
+          complaint.status !== "closed"
+      ),
+    [complaints]
+  );
 
   const fetchData = async () => {
     setLoading(true);
 
     try {
-      const [branchesData, catalog, inspectorProfiles] = await Promise.all([
+      const [branchesData, complaintsData] = await Promise.all([
         fetchBranches(supabase).catch((error) => {
-          const message = error instanceof Error ? error.message : "Не удалось загрузить филиалы";
-          pushToast(message, "error");
+          pushToast(getErrorMessage(error, "Не удалось загрузить филиалы"), "error");
           return [] as Branch[];
         }),
-        fetchInspectionCatalog(supabase).catch((error) => {
-          const message = error instanceof Error ? error.message : "Не удалось загрузить критерии";
-          pushToast(message, "error");
-          return [] as InspectionCategory[];
-        }),
-        fetchInspectorProfiles(supabase).catch((error) => {
-          const message =
-            error instanceof Error ? error.message : "Не удалось загрузить проверяющих";
-          const canUseCurrentProfile =
-            profile && (profile.role === "admin" || profile.role === "qc");
-          if (!canUseCurrentProfile) {
-            pushToast(message, "error");
-          }
-          return [];
+        fetchComplaints(supabase).catch((error) => {
+          pushToast(getErrorMessage(error, "Не удалось загрузить заявки"), "error");
+          return [] as Complaint[];
         }),
       ]);
 
-      setInspectorOptions(
-        buildInspectorOptions(inspectorProfiles, profile, session?.user ?? null)
-      );
-
       setBranches(branchesData);
-      setCategories(catalog);
+      setComplaints(complaintsData);
 
       const inspectionsData = await fetchInspectionsList(supabase).catch((error) => {
-        const message = error instanceof Error ? error.message : "Не удалось загрузить проверки";
-        pushToast(message, "error");
+        pushToast(getErrorMessage(error, "Не удалось загрузить проверки"), "error");
         return [];
       });
 
@@ -244,8 +165,7 @@ export default function InspectionsPage() {
         setPhotoUrls({});
       }
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Ошибка загрузки";
-      pushToast(message, "error");
+      pushToast(getErrorMessage(error, "Ошибка загрузки"), "error");
     } finally {
       setLoading(false);
     }
@@ -254,42 +174,6 @@ export default function InspectionsPage() {
   useEffect(() => {
     void fetchData();
   }, [profile?.id, profile?.role]);
-
-  useEffect(() => {
-    const raw = searchParams.get(INSPECTION_FOCUS_QUERY);
-    if (!raw) return;
-
-    const parsed = Number(raw);
-    if (Number.isFinite(parsed) && parsed > 0) {
-      setPendingFocusId(parsed);
-    }
-  }, [searchParams]);
-
-  useEffect(() => {
-    if (!profile?.full_name || form.inspector) return;
-    if (inspectorOptions.includes(profile.full_name)) {
-      setForm((prev) => ({ ...prev, inspector: profile.full_name ?? "" }));
-    }
-  }, [form.inspector, inspectorOptions, profile?.full_name]);
-
-  useEffect(() => {
-    if (categories.length > 0 && Object.keys(criterionValues).length === 0) {
-      setCriterionValues(buildDefaultCriterionValues(categories));
-    }
-  }, [categories, criterionValues]);
-
-  useEffect(() => {
-    if (!showForm || form.branch_id !== 0) return;
-
-    if (filterBranchId !== "all") {
-      setForm((prev) => ({ ...prev, branch_id: filterBranchId }));
-      return;
-    }
-
-    if (selectableBranches.length === 1 && selectableBranches[0].id != null) {
-      setForm((prev) => ({ ...prev, branch_id: selectableBranches[0].id as number }));
-    }
-  }, [filterBranchId, form.branch_id, selectableBranches, showForm]);
 
   const filteredInspections = useMemo(() => {
     return inspections.filter((item) => {
@@ -301,253 +185,6 @@ export default function InspectionsPage() {
       return true;
     });
   }, [filterBranchId, filterDateFrom, filterDateTo, filterStatus, inspections]);
-
-  const openComplaintInspection = (item: InspectionRow) => {
-    if (!item.id) return;
-
-    setEditingInspectionId(item.id);
-    setLinkedComplaintId(item.complaint_id ?? null);
-    setShowForm(true);
-    setSaveError(null);
-    setForm({
-      branch_id: item.branch_id,
-      inspector: profile?.full_name?.trim() || item.inspector,
-      inspected_at: item.inspected_at?.slice(0, 10) ?? todayInputValue(),
-      comment: item.comment ?? "",
-      status: item.status,
-    });
-
-    const values = buildDefaultCriterionValues(categories);
-    for (const result of resultsByInspection[item.id] ?? []) {
-      if (!result.criterion_id) continue;
-      values[result.criterion_id] = {
-        answer: result.answer,
-        comment: result.comment ?? "",
-      };
-    }
-    setCriterionValues(values);
-  };
-
-  useEffect(() => {
-    if (pendingFocusId == null || loading) return;
-
-    const item = inspections.find((row) => row.id === pendingFocusId);
-    if (!item) return;
-
-    openComplaintInspection(item);
-    setPendingFocusId(null);
-  }, [pendingFocusId, loading, inspections, categories, resultsByInspection, profile?.full_name]);
-
-  const handleCriterionChange = (criterionId: string, value: CriterionFormValue) => {
-    setCriterionValues((prev) => ({ ...prev, [criterionId]: value }));
-  };
-
-  const handleCreateCriterion = async (subcategoryId: string, draft: NewCriterionDraft) => {
-    const subcategory = categories
-      .flatMap((category) => category.subcategories ?? [])
-      .find((item) => item.id === subcategoryId);
-
-    if (!subcategory) {
-      throw new Error("Подгруппа не найдена");
-    }
-
-    const criterion = await createInspectionCriterion(supabase, {
-      subcategory_id: subcategoryId,
-      title: draft.title,
-      severity: draft.severity,
-      penalty_points: draft.penalty_points,
-      description: draft.description ?? null,
-      sort_order: (subcategory.criteria?.length ?? 0) + 1,
-    });
-
-    setCategories((prev) => appendCriterionToCategories(prev, subcategoryId, criterion));
-    setCriterionValues((prev) => ({
-      ...prev,
-      [criterion.id]: { answer: "no", comment: "" },
-    }));
-
-    await writeAuditLog(supabase, "inspection_criterion_created", "inspection_criterion", criterion.id, {
-      subcategory_id: subcategoryId,
-      title: criterion.title,
-      severity: criterion.severity,
-      penalty_points: criterion.penalty_points,
-    });
-
-    pushToast("Критерий добавлен в подгруппу", "success");
-  };
-
-  const handleSave = async () => {
-    setSaveError(null);
-
-    if (!form.branch_id) {
-      setSaveError("Выбери филиал");
-      return;
-    }
-
-    const inspector = form.inspector.trim();
-    if (!inspector) {
-      setSaveError("Укажи проверяющего");
-      return;
-    }
-
-    if (!form.inspected_at) {
-      setSaveError("Укажи дату проверки");
-      return;
-    }
-
-    if (allCriteria.length === 0) {
-      setSaveError("Справочник критериев пуст. Выполни SQL seed в Supabase.");
-      return;
-    }
-
-    const results = Object.entries(criterionValues).map(([criterion_id, value]) => ({
-      criterion_id,
-      answer: value.answer,
-    }));
-    const summary = calculateInspectionScore(allCriteria, results);
-
-    setSaving(true);
-
-    const inspectionPayload = {
-      branch_id: form.branch_id,
-      inspector,
-      inspected_at: `${form.inspected_at}T12:00:00`,
-      score: summary.score,
-      comment: form.comment.trim(),
-      status: form.status,
-      author_id: session?.user.id ?? null,
-      minor_violations: summary.minorViolations,
-      medium_violations: summary.mediumViolations,
-      critical_violations: summary.criticalViolations,
-      non_scoring_findings: summary.nonScoringFindings,
-      total_penalties: summary.totalPenalties,
-    };
-
-    let inspectionId = editingInspectionId;
-
-    if (editingInspectionId) {
-      const { error } = await supabase
-        .from("inspections")
-        .update(inspectionPayload)
-        .eq("id", editingInspectionId);
-
-      if (error) {
-        setSaving(false);
-        setSaveError(error.message || "Не удалось сохранить");
-        pushToast("Не удалось сохранить проверку", "error");
-        return;
-      }
-
-      const { error: deleteResultsError } = await supabase
-        .from("inspection_results")
-        .delete()
-        .eq("inspection_id", editingInspectionId);
-
-      if (deleteResultsError) {
-        setSaving(false);
-        setSaveError(deleteResultsError.message);
-        pushToast("Не удалось обновить результаты проверки", "error");
-        return;
-      }
-    } else {
-      const { data, error } = await supabase
-        .from("inspections")
-        .insert([inspectionPayload])
-        .select("id")
-        .single();
-
-      if (error) {
-        setSaving(false);
-        setSaveError(error.message || "Не удалось сохранить");
-        pushToast("Не удалось сохранить проверку", "error");
-        return;
-      }
-
-      inspectionId = data.id as number;
-    }
-
-    if (!inspectionId) {
-      setSaving(false);
-      setSaveError("Не удалось определить проверку");
-      return;
-    }
-
-    const resultRows = Object.entries(criterionValues).map(([criterion_id, value]) => ({
-      inspection_id: inspectionId,
-      criterion_id,
-      answer: value.answer,
-      comment: value.comment.trim() || null,
-    }));
-
-    const { error: resultsError } = await supabase.from("inspection_results").insert(resultRows);
-
-    if (resultsError) {
-      setSaving(false);
-      setSaveError(resultsError.message);
-      pushToast(
-        editingInspectionId
-          ? "Проверка обновлена, но результаты критериев не сохранились"
-          : "Проверка создана, но результаты критериев не сохранились",
-        "error"
-      );
-      return;
-    }
-
-    if (session?.user.id) {
-      for (const [criterionId, value] of Object.entries(criterionValues)) {
-        if (!value.photoFile) continue;
-        try {
-          await uploadInspectionPhoto(
-            supabase,
-            inspectionId,
-            value.photoFile,
-            session.user.id,
-            criterionId
-          );
-        } catch (uploadError) {
-          const message =
-            uploadError instanceof Error ? uploadError.message : "Ошибка загрузки фото";
-          pushToast(message, "error");
-        }
-      }
-    }
-
-    if (linkedComplaintId) {
-      await supabase
-        .from("complaints")
-        .update({ status: mapInspectionStatusToComplaintStatus(form.status) })
-        .eq("id", linkedComplaintId);
-    }
-
-    setSaving(false);
-
-    await writeAuditLog(
-      supabase,
-      editingInspectionId ? "inspection_updated" : "inspection_created",
-      "inspection",
-      inspectionId,
-      {
-        branch_id: form.branch_id,
-        status: form.status,
-        score: summary.score,
-        complaint_id: linkedComplaintId,
-      }
-    );
-
-    pushToast(editingInspectionId ? "Проверка обновлена" : "Проверка сохранена", "success");
-    setEditingInspectionId(null);
-    setLinkedComplaintId(null);
-    setForm({
-      branch_id: 0,
-      inspector: profile?.full_name ?? "",
-      inspected_at: todayInputValue(),
-      comment: "",
-      status: "completed",
-    });
-    setCriterionValues(buildDefaultCriterionValues(categories));
-    setShowForm(false);
-    void fetchData();
-  };
 
   const handleDelete = async (item: InspectionRow) => {
     if (!item.id) return;
@@ -585,8 +222,7 @@ export default function InspectionsPage() {
       pushToast("Фото удалено", "success");
       void fetchData();
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Не удалось удалить фото";
-      pushToast(message, "error");
+      pushToast(getErrorMessage(error, "Не удалось удалить фото"), "error");
     }
   };
 
@@ -622,33 +258,27 @@ export default function InspectionsPage() {
         </div>
 
         {canRunInspection ? (
-          <button
-            type="button"
-            onClick={() => {
-              setSaveError(null);
-              setEditingInspectionId(null);
-              setLinkedComplaintId(null);
-              setShowForm((prev) => !prev);
-            }}
-            className="rounded-xl bg-green-600 px-4 py-2 hover:bg-green-500"
+          <Link
+            href={buildInspectionNewHref()}
+            className="rounded-xl bg-green-600 px-4 py-2 text-center hover:bg-green-500"
           >
             + Новая проверка
-          </button>
+          </Link>
         ) : null}
       </div>
 
-      {incomingInspections.length > 0 ? (
+      {incomingInspections.length > 0 || pendingComplaints.length > 0 ? (
         <section className="mb-6 space-y-3 rounded-2xl border border-emerald-500/20 bg-emerald-950/10 p-4">
           <div>
             <h2 className="text-lg font-semibold">Поступившие заявки</h2>
             <p className="mt-1 text-sm text-white/60">
-              Проверки, созданные автоматически по заявкам операторов
+              Заявки операторов, ожидающие рассмотрения QC
             </p>
           </div>
           <div className="grid gap-3">
             {incomingInspections.map((item) => (
               <article
-                key={item.id}
+                key={`inspection-${item.id}`}
                 className="flex flex-col gap-3 rounded-xl border border-white/10 bg-neutral-950/60 p-4 md:flex-row md:items-center md:justify-between"
               >
                 <div>
@@ -660,13 +290,34 @@ export default function InspectionsPage() {
                     Статус: {inspectionStatusLabel(item.status)}
                   </p>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => openComplaintInspection(item)}
-                  className="rounded-xl bg-emerald-600 px-4 py-2 text-sm hover:bg-emerald-500"
+                {item.id ? (
+                  <Link
+                    href={buildInspectionPageHref(item.id)}
+                    className="rounded-xl bg-emerald-600 px-4 py-2 text-center text-sm hover:bg-emerald-500"
+                  >
+                    Рассмотреть
+                  </Link>
+                ) : null}
+              </article>
+            ))}
+            {pendingComplaints.map((complaint) => (
+              <article
+                key={`complaint-${complaint.id}`}
+                className="flex flex-col gap-3 rounded-xl border border-white/10 bg-neutral-950/60 p-4 md:flex-row md:items-center md:justify-between"
+              >
+                <div>
+                  <p className="font-medium">
+                    {complaint.branches?.name ?? `Филиал #${complaint.branch_id}`} · заявка
+                  </p>
+                  <p className="mt-1 line-clamp-2 text-sm text-white/70">{complaint.complaint_text}</p>
+                  <p className="mt-2 text-xs text-white/50">Проверка ещё не создана</p>
+                </div>
+                <Link
+                  href={buildInspectionNewHref(complaint.id)}
+                  className="rounded-xl bg-emerald-600 px-4 py-2 text-center text-sm hover:bg-emerald-500"
                 >
                   Рассмотреть
-                </button>
+                </Link>
               </article>
             ))}
           </div>
@@ -715,133 +366,6 @@ export default function InspectionsPage() {
           className="rounded-xl bg-neutral-800 px-3 py-2"
         />
       </div>
-
-      {showForm ? (
-        <div className="mb-6 space-y-5 rounded-2xl border border-white/10 bg-neutral-900 p-4">
-          {saveError ? (
-            <p className="rounded-lg bg-red-900/40 px-3 py-2 text-sm text-red-200">{saveError}</p>
-          ) : null}
-
-          <div className="grid gap-3 md:grid-cols-2">
-            <select
-              value={form.branch_id}
-              onChange={(e) => setForm({ ...form, branch_id: Number(e.target.value) })}
-              className="rounded-xl bg-neutral-800 px-3 py-2"
-            >
-              <option value={0}>Выбери филиал</option>
-              {selectableBranches.map((branch) => (
-                <option key={branch.id} value={branch.id}>
-                  {branch.name}
-                </option>
-              ))}
-            </select>
-            {!profileLoading && selectableBranches.length === 0 ? (
-              <p className="md:col-span-2 text-sm text-amber-200/90">
-                Нет доступных филиалов. Добавьте их в разделе «Филиалы» (для admin) или назначьте
-                филиал в профиле пользователя.
-              </p>
-            ) : null}
-            {branchAssignmentMissing ? (
-              <p className="md:col-span-2 text-sm text-white/60">
-                В профиле не указаны филиалы — для проверки доступен общий список из справочника.
-              </p>
-            ) : null}
-
-            <input
-              type="date"
-              value={form.inspected_at}
-              onChange={(e) => setForm({ ...form, inspected_at: e.target.value })}
-              className="rounded-xl bg-neutral-800 px-3 py-2"
-            />
-
-            <select
-              value={
-                inspectorOptions.includes(form.inspector) || form.inspector === ""
-                  ? form.inspector
-                  : "__custom__"
-              }
-              onChange={(event) => {
-                const value = event.target.value;
-                if (value === "__custom__") {
-                  setForm({ ...form, inspector: "" });
-                  return;
-                }
-                setForm({ ...form, inspector: value });
-              }}
-              className="rounded-xl bg-neutral-800 px-3 py-2"
-            >
-              <option value="">Выбери проверяющего</option>
-              {inspectorOptions.map((name) => (
-                <option key={name} value={name}>
-                  {name}
-                </option>
-              ))}
-              <option value="__custom__">Другой проверяющий</option>
-            </select>
-            {!inspectorOptions.includes(form.inspector) ? (
-              <input
-                placeholder="ФИО проверяющего"
-                value={form.inspector}
-                onChange={(event) => setForm({ ...form, inspector: event.target.value })}
-                className="rounded-xl bg-neutral-800 px-3 py-2"
-              />
-            ) : null}
-            {inspectorOptions.length === 0 ? (
-              <p className="md:col-span-2 text-sm text-amber-200/90">
-                Список проверяющих пуст. Добавьте пользователей с ролями admin или qc в profiles.
-              </p>
-            ) : null}
-
-            <select
-              value={form.status}
-              onChange={(e) => setForm({ ...form, status: e.target.value as InspectionStatus })}
-              className="rounded-xl bg-neutral-800 px-3 py-2"
-            >
-              {statusOptions.map((status) => (
-                <option key={status} value={status}>
-                  {inspectionStatusLabel(status)}
-                </option>
-              ))}
-            </select>
-
-            <textarea
-              placeholder="Общий комментарий по проверке"
-              value={form.comment}
-              onChange={(e) => setForm({ ...form, comment: e.target.value })}
-              className="min-h-24 rounded-xl bg-neutral-800 px-3 py-2 md:col-span-2"
-            />
-          </div>
-
-          <InspectionCriteriaForm
-            categories={categories}
-            values={criterionValues}
-            onChange={handleCriterionChange}
-            canManageCriteria={canManageCatalog}
-            onCreateCriterion={canManageCatalog ? handleCreateCriterion : undefined}
-          />
-
-          <div className="rounded-2xl border border-white/10 bg-neutral-950/50 p-4">
-            <p className="text-sm text-white/60">База: {BASE_INSPECTION_SCORE} баллов</p>
-            <p className="mt-2 text-2xl font-bold">
-              Итог: {previewScore.score} баллов · {scoreStatus(previewScore.score)}
-            </p>
-            <p className="mt-2 text-sm text-white/70">
-              Сумма штрафов: {previewScore.totalPenalties} · Мелкие: {previewScore.minorViolations} ·
-              Средние: {previewScore.mediumViolations} · Грубые: {previewScore.criticalViolations} ·
-              Безоценочные: {previewScore.nonScoringFindings}
-            </p>
-          </div>
-
-          <button
-            type="button"
-            onClick={() => void handleSave()}
-            disabled={saving}
-            className="rounded-xl bg-blue-600 px-4 py-2 disabled:opacity-50"
-          >
-            {saving ? "Сохранение…" : "Сохранить проверку"}
-          </button>
-        </div>
-      ) : null}
 
       {filteredInspections.length === 0 ? (
         <EmptyState

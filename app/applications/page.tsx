@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import ApplicationCard from "@/app/components/applications/ApplicationCard";
 import EmptyState from "@/app/components/EmptyState";
 import LoadingState from "@/app/components/LoadingState";
@@ -23,6 +24,8 @@ import {
   complaintStatusLabel,
 } from "@/lib/complaints";
 import { createLinkedInspection } from "@/lib/complaintInspections";
+import { buildInspectionPageHref } from "@/lib/inspectionPaths";
+import { resolveLinkedInspection } from "@/lib/complaintWorkflow";
 import { createComplaint, fetchComplaints } from "@/lib/complaintsData";
 import { getErrorMessage } from "@/lib/errors";
 import { fetchBranches } from "@/lib/inspectionData";
@@ -83,6 +86,7 @@ function complaintSearchHaystack(complaint: Complaint, branches: Branch[]) {
 }
 
 export default function ApplicationsPage() {
+  const router = useRouter();
   const { profile, session, loading: profileLoading } = useProfile();
   const { pushToast } = useToast();
 
@@ -102,6 +106,7 @@ export default function ApplicationsPage() {
   const [filterDateTo, setFilterDateTo] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [creatingInspectionForId, setCreatingInspectionForId] = useState<string | null>(null);
+  const [reviewingComplaintId, setReviewingComplaintId] = useState<string | null>(null);
 
   const selectableBranches = useMemo(
     () => selectableBranchesForApplication(profile, branches),
@@ -225,6 +230,25 @@ export default function ApplicationsPage() {
       pushToast(getErrorMessage(error, "Не удалось создать проверку"), "error");
     } finally {
       setCreatingInspectionForId(null);
+    }
+  };
+
+  const handleReviewApplication = async (complaint: Complaint) => {
+    setReviewingComplaintId(complaint.id);
+    try {
+      let inspectionId =
+        resolveLinkedInspection(complaint)?.id ?? complaint.inspection_id ?? null;
+
+      if (!inspectionId) {
+        inspectionId = await createLinkedInspection(supabase, complaint, session?.user?.id ?? null);
+        await loadData();
+      }
+
+      router.push(buildInspectionPageHref(inspectionId));
+    } catch (error) {
+      pushToast(getErrorMessage(error, "Не удалось открыть проверку"), "error");
+    } finally {
+      setReviewingComplaintId(null);
     }
   };
 
@@ -545,6 +569,7 @@ export default function ApplicationsPage() {
               isOperator={isOperator}
               canReview={canReview}
               canManualCreate={canManualCreate}
+              reviewing={reviewingComplaintId === complaint.id}
               creatingInspection={creatingInspectionForId === complaint.id}
               onSyncJira={(complaintId) => {
                 void syncComplaintWithJira(complaintId).catch((error) => {
@@ -555,6 +580,9 @@ export default function ApplicationsPage() {
               }}
               onCreateManualInspection={(item) => {
                 void handleCreateManualInspection(item);
+              }}
+              onReview={(item) => {
+                void handleReviewApplication(item);
               }}
             />
           ))}

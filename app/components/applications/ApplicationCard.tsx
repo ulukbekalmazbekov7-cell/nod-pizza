@@ -10,7 +10,6 @@ import {
   jiraSyncBadgeClass,
   jiraSyncStatusLabel,
 } from "@/lib/complaints";
-import { buildInspectionFocusHref } from "@/lib/complaintLinks";
 import { complaintHandedOffToQc, resolveLinkedInspection } from "@/lib/complaintWorkflow";
 import { inspectionStatusLabel } from "@/lib/inspections";
 import type { Complaint } from "@/lib/types";
@@ -21,9 +20,11 @@ type ApplicationCardProps = {
   isOperator: boolean;
   canReview: boolean;
   canManualCreate: boolean;
+  reviewing: boolean;
   creatingInspection: boolean;
   onSyncJira: (complaintId: string) => void;
   onCreateManualInspection: (complaint: Complaint) => void;
+  onReview: (complaint: Complaint) => void;
 };
 
 export default function ApplicationCard({
@@ -32,9 +33,11 @@ export default function ApplicationCard({
   isOperator,
   canReview,
   canManualCreate,
+  reviewing,
   creatingInspection,
   onSyncJira,
   onCreateManualInspection,
+  onReview,
 }: ApplicationCardProps) {
   const linkedInspection = resolveLinkedInspection(complaint);
   const handedOffToQc = complaintHandedOffToQc(complaint);
@@ -102,29 +105,20 @@ export default function ApplicationCard({
       ) : null}
 
       <div className="mt-4 flex flex-wrap items-center gap-3 text-sm">
-        {linkedInspection ? (
-          !isOperator ? (
-            canReview ? (
-              <Link
-                href={buildInspectionFocusHref(linkedInspection.id)}
-                className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium hover:bg-emerald-500"
-              >
-                Рассмотреть заявку
-              </Link>
-            ) : (
-              <Link
-                href={buildInspectionFocusHref(linkedInspection.id)}
-                className="text-emerald-300 hover:text-emerald-200"
-              >
-                Открыть связанную проверку
-              </Link>
-            )
-          ) : null
-        ) : (
+        {canReview && !isOperator ? (
+          <button
+            type="button"
+            onClick={() => onReview(complaint)}
+            disabled={reviewing}
+            className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium hover:bg-emerald-500 disabled:opacity-50"
+          >
+            {reviewing ? "Открытие…" : "Рассмотреть заявку"}
+          </button>
+        ) : !linkedInspection ? (
           <p className="rounded-xl border border-amber-500/30 bg-amber-950/20 px-3 py-2 text-amber-100">
             Связанная проверка ещё не создана. QC или администратор может создать её вручную.
           </p>
-        )}
+        ) : null}
 
         {!isOperator ? (
           complaint.jira_issue_url ? (
@@ -141,7 +135,7 @@ export default function ApplicationCard({
           )
         ) : null}
 
-        {canManualCreate && !linkedInspection ? (
+        {canManualCreate && !canReview && !linkedInspection ? (
           <button
             type="button"
             onClick={() => onCreateManualInspection(complaint)}

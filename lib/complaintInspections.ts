@@ -34,21 +34,69 @@ export function buildInspectionSummaryFromComplaint(complaint: Complaint) {
   return lines.join("\n");
 }
 
+export function buildDraftInspectionRowFromComplaint(
+  complaint: Complaint,
+  inspectionId: number
+) {
+  return {
+    id: inspectionId,
+    branch_id: complaint.branch_id,
+    inspector: "Контроль качества",
+    score: null,
+    comment: buildInspectionSummaryFromComplaint(complaint),
+    status: "draft" as const,
+    complaint_id: complaint.id,
+    author_id: complaint.created_by ?? null,
+    inspected_at: null,
+    branches: complaint.branches ?? null,
+  };
+}
+
 export async function createLinkedInspection(
   client: SupabaseClient,
   complaint: Complaint,
   actorId?: string | null
 ) {
+  const comment = buildInspectionSummaryFromComplaint(complaint);
+  const authorId = actorId ?? complaint.created_by ?? null;
+
+  const { data: rpcInspectionId, error: rpcError } = await client.rpc(
+    "create_linked_inspection_for_complaint",
+    {
+      p_complaint_id: complaint.id,
+      p_comment: comment,
+      p_actor_id: authorId,
+    }
+  );
+
+  if (!rpcError && rpcInspectionId != null) {
+    const inspectionId = Number(rpcInspectionId);
+    if (!Number.isFinite(inspectionId) || inspectionId <= 0) {
+      throw new Error("Сервер вернул некорректный id проверки");
+    }
+    return inspectionId;
+  }
+
+  const rpcMissing =
+    rpcError?.code === "PGRST202" ||
+    rpcError?.message?.includes("create_linked_inspection_for_complaint");
+
+  if (!rpcMissing) {
+    throw new Error(
+      getErrorMessage(rpcError, "Не удалось создать проверку по заявке")
+    );
+  }
+
   const { data: inspection, error: inspectionError } = await client
     .from("inspections")
     .insert({
       branch_id: complaint.branch_id,
       inspector: "Контроль качества",
       score: null,
-      comment: buildInspectionSummaryFromComplaint(complaint),
+      comment,
       status: "draft",
       complaint_id: complaint.id,
-      author_id: actorId ?? complaint.created_by ?? null,
+      author_id: authorId,
       inspected_at: null,
     })
     .select("id")
